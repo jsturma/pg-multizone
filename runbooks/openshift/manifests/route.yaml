@@ -1,0 +1,14 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: pg
+  namespace: pg-multizone
+spec:
+  to:
+    kind: Service
+    name: postgres
+  port:
+    targetPort: pg
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

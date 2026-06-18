@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rook-ceph-tools
+  labels:
+    app: rook-ceph-tools
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rook-ceph-tools
+  template:
+    metadata:
+      labels:
+        app: rook-ceph-tools
+    spec:
+      containers:
+        - name: rook-ceph-tools
+          image: quay.io/ceph/ceph:latest
+          command: ["/tini", "-g", "--", "sleep", "infinity"]
+          env:
+            - name: ROOK_CEPH_CLUSTER_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: ceph-config
+              mountPath: /etc/ceph
+            - name: ceph-admin-keyring
+              mountPath: /etc/ceph/keyring
+      volumes:
+        - name: ceph-config
+          configMap:
+            name: rook-ceph-config
+        - name: ceph-admin-keyring
+          secret:
+            secretName: rook-ceph-admin-keyring
