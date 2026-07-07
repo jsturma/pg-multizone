@@ -22,6 +22,8 @@ All scripts and manifests live under [`runbooks/openshift/`](runbooks/openshift/
 > - **Data risk:** replica-1 volumes — OSD loss in a zone means **data loss** for volumes in that zone.
 >
 > If diagnosis shows NR pools are not supported, use **`cephrbd-multizone-r`** (resilient, no cluster change) or **Option D** — external Ceph ([`External-Ceph-Cluster.md`](External-Ceph-Cluster.md)).
+>
+> **Recommendation for zone-local volumes:** when ODF NR is blocked and you need true zone-pinned RBD, prefer a **[fresh Ceph install on 3 dedicated Linux nodes](External-Ceph-Cluster.md#fresh-install--ceph-on-3-linux-nodes)** (Option D, F.1–F.9) over patching an existing ODF-backed Ceph cluster. A dedicated cluster gives clean zone topology from day one, avoids CRUSH changes on the ODF storage layer, and does not require ODF redeploy. Use the [existing-cluster path](External-Ceph-Cluster.md#step-1--ceph-per-zone-pools-on-an-existing-cluster) only when you already operate a separate Ceph cluster you can extend.
 
 > **Platform support**  
 > This project currently supports **OpenShift only**. The runbooks use OpenShift-specific resources (OCS, `oc`, Routes) and have been tested against OpenShift Container Storage.  
@@ -97,9 +99,19 @@ cd runbooks/openshift
 
 ### Option D — RBD zone-local via external Ceph (`ceph-external-zone-nr`)
 
-Use when ODF cannot create per-zone pools (e.g. `flexibleScaling: true`, `failureDomain: host` only). Supports **fresh Ceph install** or **existing cluster**.
+Use when ODF cannot create per-zone pools (e.g. `flexibleScaling: true`, `failureDomain: host` only).
 
-**1.** Follow [`External-Ceph-Cluster.md`](External-Ceph-Cluster.md) — Ceph pools (F.1–F.9 or Step 1), Ceph-CSI (Step 2), node labels (Step 3), StorageClass (Step 4).
+> **Recommended:** [Fresh install — Ceph on 3 Linux nodes](External-Ceph-Cluster.md#fresh-install--ceph-on-3-linux-nodes) (F.1–F.9) on **dedicated storage hosts** — not OpenShift workers. Zone buckets and per-zone pools are created in the right order with no impact on ODF.  
+> **Alternative:** [existing Ceph cluster](External-Ceph-Cluster.md#step-1--ceph-per-zone-pools-on-an-existing-cluster) (Step 1) only if you already run a separate Ceph cluster; skip Step 1 if you completed the fresh install.
+
+**1.** Follow [`External-Ceph-Cluster.md`](External-Ceph-Cluster.md):
+
+| Situation | Start at |
+|-----------|----------|
+| No Ceph yet (recommended) | [F.1 — Prepare all three nodes](External-Ceph-Cluster.md#f1-prepare-all-three-nodes) |
+| Ceph already running | [Step 1 — per-zone pools](External-Ceph-Cluster.md#step-1--ceph-per-zone-pools-on-an-existing-cluster) |
+
+Then complete Steps 2–4 (Ceph-CSI, node labels, StorageClass).
 
 **2.** Deploy PostgreSQL:
 
@@ -285,7 +297,7 @@ oc delete namespace external-ceph-csi
 | **Password security** | Use SealedSecrets, Vault, or OpenShift Secrets Encryption in production. |
 | **CephFS backup** | Create a `VolumeSnapshotClass` and schedule snapshots. |
 | **PostgreSQL HA** | 3 isolated DBs per zone. Use `cephrbd-multizone-r` for Ceph replication, or zone-local RBD with app-level HA. |
-| **Zone-local storage** | ODF: `cephrbd-multizone-nr` — **requires StorageCluster patch** and zone topology ([`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)). External: `ceph-external-zone-nr` when ODF NR is blocked ([`External-Ceph-Cluster.md`](External-Ceph-Cluster.md)). |
+| **Zone-local storage** | ODF: `cephrbd-multizone-nr` — **requires StorageCluster patch** and zone topology ([`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)). If blocked: **fresh external Ceph on 3 nodes** ([`External-Ceph-Cluster.md` § Fresh install](External-Ceph-Cluster.md#fresh-install--ceph-on-3-linux-nodes)) — preferred over ODF redeploy or sharing ODF's Ceph. |
 | **Resilient storage** | `cephrbd-multizone-r` — replicas across zones, not zone-pinned. |
 | **Reclaim policy** | `Delete` removes the PV when the PVC is deleted. Use `Retain` to keep data. |
 | **Monitoring** | Add `postgres_exporter` or Prometheus scraping. |

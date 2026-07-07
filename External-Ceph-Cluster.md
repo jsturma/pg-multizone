@@ -6,8 +6,12 @@ Use this guide when ODF cannot provision per-zone pools (e.g. `flexibleScaling: 
 
 | Path | When | Start here |
 |------|------|------------|
-| **Fresh install** | No Ceph yet — 3 dedicated Linux nodes | [F.1](#f1-prepare-all-three-nodes) |
-| **Existing Ceph** | Ceph already running (e.g. shared with ODF) | [Step 1](#step-1--ceph-per-zone-pools-on-an-existing-cluster) |
+| **Fresh install** (recommended) | No Ceph yet — 3 dedicated Linux nodes | [F.1](#f1-prepare-all-three-nodes) |
+| **Existing Ceph** | Separate Ceph cluster already running — not recommended on ODF-shared Ceph unless you accept CRUSH change risk | [Step 1](#step-1--ceph-per-zone-pools-on-an-existing-cluster) |
+
+> **Recommendation**  
+> For zone-local RBD when ODF non-resilient pools are unavailable, **prefer a fresh install** on three dedicated storage nodes. You get zone topology and per-zone pools (F.6–F.7) without touching ODF or redeploying OpenShift Data Foundation.  
+> Use the **existing-cluster** path only when you already operate an independent Ceph cluster with spare capacity — not as a shortcut to add pools on the same Ceph mons ODF uses unless you have tested CRUSH changes in non-production.
 
 Both paths merge at **[Step 2](#step-2--deploy-ceph-csi-separate-from-odf)** (CSI on OpenShift) and follow the same Steps 3–7.
 
@@ -51,8 +55,8 @@ flowchart TD
 
 | Situation | Use this guide? |
 |-----------|-----------------|
-| **No Ceph yet** — dedicated storage nodes | **Yes** — [fresh install](#fresh-install--ceph-on-3-linux-nodes) |
-| ODF `flexibleScaling: true`, `failureDomain: host` | **Yes** — [existing cluster](#step-1--ceph-per-zone-pools-on-an-existing-cluster) + external CSI |
+| **No Ceph yet** — dedicated storage nodes | **Yes** — [fresh install](#fresh-install--ceph-on-3-linux-nodes) (**recommended**) |
+| ODF `flexibleScaling: true`, `failureDomain: host` | **Yes** — [fresh install](#fresh-install--ceph-on-3-linux-nodes) preferred; [existing cluster](#step-1--ceph-per-zone-pools-on-an-existing-cluster) if you already have separate Ceph |
 | ODF non-resilient pools already work | **No** — use [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md) with `cephrbd-multizone-nr` |
 | Greenfield ODF with zone topology | Prefer native ODF NR pools over a second CSI driver |
 
