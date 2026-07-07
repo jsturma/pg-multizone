@@ -7,38 +7,38 @@ NAMESPACE="${NAMESPACE:-pg-multizone}"
 STORAGE_CLASS="${STORAGE_CLASS:-}"
 
 CEPHFS_SC="cephfs-multizone"
-CEPHRBD_SC="cephrbd-multizone"
+CEPHRBD_R_SC="cephrbd-multizone-r"
+CEPHRBD_NR_SC="cephrbd-multizone-nr"
 AVAILABLE_BACKENDS=()
 
 usage() {
   cat <<'EOF'
-Usage: 03-deploy-postgres.sh [cephfs|cephrbd] [options]
+Usage: 03-deploy-postgres.sh [cephfs|cephrbd-r|cephrbd-nr] [options]
 
 Deploy PostgreSQL in the pg-multizone namespace.
 
 Storage backend:
-  cephfs    CephFS — StorageClass cephfs-multizone (statefulset.yaml)
-  cephrbd   RBD    — StorageClass cephrbd-multizone (statefulset-rbd.yaml)
+  cephfs      CephFS — cephfs-multizone (statefulset.yaml)
+  cephrbd-r   RBD resilient — cephrbd-multizone-r (statefulset-rbd.yaml)
+  cephrbd-nr  RBD non-resilient, zone-local — cephrbd-multizone-nr (statefulset-rbd-nr.yaml)
 
 Only backends whose StorageClass exists in the cluster are offered.
 
-If no backend is given on the command line and STORAGE_CLASS is unset,
-an interactive prompt is shown.
+Aliases: cephrbd / cephrbd-resilient → cephrbd-r; cephrbd-non-resilient → cephrbd-nr
 
 Options:
   -h, --help    Show this help message and exit
 
 Environment variables:
-  STORAGE_CLASS   cephfs | cephrbd | cephfs-multizone | cephrbd-multizone
+  STORAGE_CLASS   backend name or full StorageClass name (see above)
   NAMESPACE       Target namespace (default: pg-multizone)
   APPLY_ROUTE     Set to true to also apply the Route manifest
 
 Examples:
   ./03-deploy-postgres.sh
-  ./03-deploy-postgres.sh cephfs
-  ./03-deploy-postgres.sh cephrbd
-  STORAGE_CLASS=cephrbd ./03-deploy-postgres.sh
-  APPLY_ROUTE=true ./03-deploy-postgres.sh cephrbd
+  ./03-deploy-postgres.sh cephrbd-r
+  ./03-deploy-postgres.sh cephrbd-nr
+  STORAGE_CLASS=cephrbd-multizone-r ./03-deploy-postgres.sh
 EOF
 }
 
@@ -48,22 +48,32 @@ storage_class_exists() {
 
 backend_to_sc() {
   case "$1" in
-    cephfs)  echo "$CEPHFS_SC" ;;
-    cephrbd) echo "$CEPHRBD_SC" ;;
+    cephfs)     echo "$CEPHFS_SC" ;;
+    cephrbd-r)  echo "$CEPHRBD_R_SC" ;;
+    cephrbd-nr) echo "$CEPHRBD_NR_SC" ;;
+  esac
+}
+
+backend_label() {
+  case "$1" in
+    cephfs)     echo "CephFS ($CEPHFS_SC)" ;;
+    cephrbd-r)  echo "RBD resilient ($CEPHRBD_R_SC)" ;;
+    cephrbd-nr) echo "RBD non-resilient / zone-local ($CEPHRBD_NR_SC)" ;;
   esac
 }
 
 backend_doc() {
   case "$1" in
-    cephfs)  echo "${SCRIPT_DIR}/STORAGECLASS.md" ;;
-    cephrbd) echo "${SCRIPT_DIR}/STORAGECLASS-RBD.md" ;;
+    cephfs)     echo "${SCRIPT_DIR}/STORAGECLASS.md" ;;
+    cephrbd-r|cephrbd-nr) echo "${SCRIPT_DIR}/STORAGECLASS-RBD.md" ;;
   esac
 }
 
 discover_available_backends() {
   AVAILABLE_BACKENDS=()
   storage_class_exists "$CEPHFS_SC" && AVAILABLE_BACKENDS+=("cephfs")
-  storage_class_exists "$CEPHRBD_SC" && AVAILABLE_BACKENDS+=("cephrbd")
+  storage_class_exists "$CEPHRBD_R_SC" && AVAILABLE_BACKENDS+=("cephrbd-r")
+  storage_class_exists "$CEPHRBD_NR_SC" && AVAILABLE_BACKENDS+=("cephrbd-nr")
 }
 
 backend_is_available() {
@@ -75,19 +85,21 @@ backend_is_available() {
 
 no_storage_classes_error() {
   echo "❌  No supported StorageClass found in the cluster." >&2
-  echo "    Expected one of: $CEPHFS_SC, $CEPHRBD_SC" >&2
-  echo "    Create one manually:" >&2
-  echo "      CephFS → ${SCRIPT_DIR}/STORAGECLASS.md" >&2
-  echo "      RBD    → ${SCRIPT_DIR}/STORAGECLASS-RBD.md" >&2
+  echo "    Expected one of: $CEPHFS_SC, $CEPHRBD_R_SC, $CEPHRBD_NR_SC" >&2
+  echo "    Create manually — see ${SCRIPT_DIR}/STORAGECLASS-RBD.md" >&2
 }
 
 normalize_storage_class() {
   case "$1" in
-    cephfs|cephfs-multizone)   echo "$CEPHFS_SC" ;;
-    cephrbd|cephrbd-multizone) echo "$CEPHRBD_SC" ;;
+    cephfs|cephfs-multizone)
+      echo "$CEPHFS_SC" ;;
+    cephrbd|cephrbd-r|cephrbd-resilient|cephrbd-multizone|cephrbd-multizone-r)
+      echo "$CEPHRBD_R_SC" ;;
+    cephrbd-nr|cephrbd-non-resilient|cephrbd-multizone-nr)
+      echo "$CEPHRBD_NR_SC" ;;
     *)
       echo "❌  Unknown storage backend: $1" >&2
-      echo "    Supported: cephfs, cephrbd" >&2
+      echo "    Supported: cephfs, cephrbd-r, cephrbd-nr" >&2
       return 1
       ;;
   esac
@@ -95,8 +107,9 @@ normalize_storage_class() {
 
 backend_from_normalized_sc() {
   case "$1" in
-    "$CEPHFS_SC")  echo cephfs ;;
-    "$CEPHRBD_SC") echo cephrbd ;;
+    "$CEPHFS_SC")     echo cephfs ;;
+    "$CEPHRBD_R_SC")  echo cephrbd-r ;;
+    "$CEPHRBD_NR_SC") echo cephrbd-nr ;;
   esac
 }
 
@@ -127,17 +140,14 @@ prompt_storage_class() {
 
   if [[ ${#AVAILABLE_BACKENDS[@]} -eq 1 ]]; then
     STORAGE_CLASS="${AVAILABLE_BACKENDS[0]}"
-    echo "✅  Only available backend: ${STORAGE_CLASS} ($(backend_to_sc "$STORAGE_CLASS"))"
+    echo "✅  Only available backend: ${STORAGE_CLASS} — $(backend_label "$STORAGE_CLASS")"
     return
   fi
 
   echo "Select storage backend:"
   local i=1
   for backend in "${AVAILABLE_BACKENDS[@]}"; do
-    case "$backend" in
-      cephfs)  echo "  $i) cephfs  — CephFS ($CEPHFS_SC)" ;;
-      cephrbd) echo "  $i) cephrbd — RBD block ($CEPHRBD_SC)" ;;
-    esac
+    echo "  $i) $backend — $(backend_label "$backend")"
     ((i++)) || true
   done
 
@@ -152,7 +162,12 @@ prompt_storage_class() {
         STORAGE_CLASS="${AVAILABLE_BACKENDS[$idx]}"
         break
       fi
-    elif [[ "$choice" == "cephfs" || "$choice" == "cephrbd" ]]; then
+    elif [[ "$choice" == "cephfs" || "$choice" == "cephrbd-r" || "$choice" == "cephrbd-nr" \
+         || "$choice" == "cephrbd" || "$choice" == "cephrbd-resilient" || "$choice" == "cephrbd-non-resilient" ]]; then
+      case "$choice" in
+        cephrbd|cephrbd-resilient) choice=cephrbd-r ;;
+        cephrbd-non-resilient) choice=cephrbd-nr ;;
+      esac
       if backend_is_available "$choice"; then
         STORAGE_CLASS="$choice"
         break
@@ -173,12 +188,16 @@ while [[ $# -gt 0 ]]; do
       usage
       exit 0
       ;;
-    cephfs|cephrbd)
+    cephfs|cephrbd|cephrbd-r|cephrbd-nr|cephrbd-resilient|cephrbd-non-resilient)
       if [[ -n "$STORAGE_CLASS" ]]; then
         echo "❌  Storage backend specified more than once." >&2
         exit 1
       fi
-      STORAGE_CLASS="$1"
+      case "$1" in
+        cephrbd|cephrbd-resilient) STORAGE_CLASS=cephrbd-r ;;
+        cephrbd-non-resilient) STORAGE_CLASS=cephrbd-nr ;;
+        *) STORAGE_CLASS="$1" ;;
+      esac
       ;;
     *)
       echo "❌  Unknown argument: $1" >&2
@@ -206,7 +225,7 @@ if [[ -z "$STORAGE_CLASS" ]]; then
       else
         no_storage_classes_error
       fi
-      echo "    Pass cephfs or cephrbd as an argument, set STORAGE_CLASS, or run interactively." >&2
+      echo "    Pass cephfs, cephrbd-r, or cephrbd-nr; set STORAGE_CLASS; or run interactively." >&2
       echo ""
       usage >&2
       exit 1
@@ -218,8 +237,9 @@ STORAGE_CLASS=$(normalize_storage_class "$STORAGE_CLASS")
 ensure_storage_class_available "$STORAGE_CLASS"
 
 case "$STORAGE_CLASS" in
-  "$CEPHFS_SC")  STATEFULSET="${MANIFESTS_DIR}/statefulset.yaml" ;;
-  "$CEPHRBD_SC") STATEFULSET="${MANIFESTS_DIR}/statefulset-rbd.yaml" ;;
+  "$CEPHFS_SC")     STATEFULSET="${MANIFESTS_DIR}/statefulset.yaml" ;;
+  "$CEPHRBD_R_SC")  STATEFULSET="${MANIFESTS_DIR}/statefulset-rbd.yaml" ;;
+  "$CEPHRBD_NR_SC") STATEFULSET="${MANIFESTS_DIR}/statefulset-rbd-nr.yaml" ;;
 esac
 
 oc create namespace "$NAMESPACE" 2>/dev/null || echo "Namespace $NAMESPACE already exists"

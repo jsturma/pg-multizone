@@ -9,7 +9,11 @@ oc delete namespace "$NAMESPACE" --ignore-not-found
 if [[ -n "$STORAGE_CLASS" ]]; then
   oc delete storageclass "$STORAGE_CLASS" --ignore-not-found
 else
-  oc delete storageclass cephfs-multizone cephrbd-multizone --ignore-not-found
+  oc delete storageclass \
+    cephfs-multizone \
+    cephrbd-multizone-r \
+    cephrbd-multizone-nr \
+    --ignore-not-found
 fi
 
 echo "✅  Cleanup complete"

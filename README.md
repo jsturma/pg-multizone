@@ -8,7 +8,8 @@ Two storage backends are supported:
 | StorageClass | Backend | Zone-local volumes | Guide |
 |--------------|---------|-------------------|-------|
 | `cephfs-multizone` | CephFS | No — shared filesystem | [`STORAGECLASS.md`](runbooks/openshift/STORAGECLASS.md) |
-| `cephrbd-multizone` | RBD block | Yes — see [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md) | [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md) |
+| `cephrbd-multizone-r` | RBD resilient (3-way pool) | No | [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md) |
+| `cephrbd-multizone-nr` | RBD non-resilient (zone-local) | Yes — [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md) | [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md) |
 
 > **Platform support**  
 > This project currently supports **OpenShift only**. The runbooks use OpenShift-specific resources (OCS, `oc`, Routes) and have been tested against OpenShift Container Storage.  
@@ -27,7 +28,7 @@ Two storage backends are supported:
 | **OpenShift cluster** | v4.12 or later, with the *OpenShift Container Storage* (OCS) or *Rook-Ceph* operator already installed. | `oc get pods -n openshift-storage` – OCS/rook-ceph pods must be running. |
 | **Admin access** | `cluster-admin` or a role able to create StorageClasses, label nodes, create PVCs, etc. | `oc whoami` → must return an authorized account. |
 | **CSI CephFS driver** | `openshift-storage.cephfs.csi.ceph.com` — for `cephfs-multizone`. | `oc get csidriver openshift-storage.cephfs.csi.ceph.com` |
-| **CSI RBD driver** | `openshift-storage.rbd.csi.ceph.com` — for `cephrbd-multizone`. | `oc get csidriver openshift-storage.rbd.csi.ceph.com` |
+| **CSI RBD driver** | `openshift-storage.rbd.csi.ceph.com` — for `cephrbd-multizone-r` / `-nr`. | `oc get csidriver openshift-storage.rbd.csi.ceph.com` |
 | **PostgreSQL images** | `registry.redhat.io/rhel9/postgresql-13` uses `POSTGRESQL_*` env vars (not `POSTGRES_*`). | `oc import-image registry.redhat.io/rhel9/postgresql-13 --dry-run=client` |
 | **Tools** | `oc`, `jq`, `bash` (or PowerShell) on your workstation. | `oc version`, `jq --version` |
 
@@ -46,23 +47,24 @@ cd runbooks/openshift
 ./deploy.sh
 ```
 
-### Option B — RBD (`cephrbd-multizone`, zone-local volumes)
+### Option B — RBD resilient (`cephrbd-multizone-r`)
 
-**1.** Label nodes, then create the StorageClass — [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md)
+**1.** Create StorageClass — [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md)
 
-**2.** Deploy:
+**2.** Deploy: `./deploy-rbd.sh`
 
-```bash
-cd runbooks/openshift
-./deploy-rbd.sh
-```
+### Option C — RBD non-resilient / zone-local (`cephrbd-multizone-nr`)
+
+**1.** Create both ODF NR pools and StorageClass — [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)
+
+**2.** Deploy: `./deploy-rbd-nr.sh`
 
 ### Steps reference
 
 | Step | Script / doc | Description |
 |------|--------------|-------------|
 | 1a | [`STORAGECLASS.md`](runbooks/openshift/STORAGECLASS.md) | **Manual** — create `cephfs-multizone` |
-| 1b | [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md) | **Manual** — create `cephrbd-multizone` |
+| 1b | [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md) | **Manual** — create `cephrbd-multizone-r` and/or `-nr` |
 | 1c | [`01-verify-csi.sh`](runbooks/openshift/01-verify-csi.sh) | Optional — verify CephFS CSI |
 | 1d | [`01-verify-csi-rbd.sh`](runbooks/openshift/01-verify-csi-rbd.sh) | Optional — verify RBD CSI |
 | 2 | [`02-label-nodes.sh`](runbooks/openshift/02-label-nodes.sh) | Label nodes `zone-a` / `zone-b` / `zone-c` |
@@ -93,22 +95,21 @@ Optional CSI check: `./01-verify-csi.sh`
 
 ---
 
-## 1️⃣b  Create the **`cephrbd-multizone` StorageClass** (manual)
+## 1️⃣b  Create RBD StorageClasses (manual)
 
-- **Simple** (no zone-local volumes): [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md) Path A  
-- **Zone-local RBD** (full ODF setup): [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)
+Both pools are documented in [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md):
 
-Summary:
+| Class | Purpose |
+|-------|---------|
+| `cephrbd-multizone-r` | Resilient 3-way replicated pool — works on your cluster today |
+| `cephrbd-multizone-nr` | Non-resilient zone-local — see [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md) |
 
-1. **Verify** the RBD CSI driver: `oc get csidriver openshift-storage.rbd.csi.ceph.com`
-2. **Copy** from `ocs-storagecluster-ceph-non-resilient-rbd` if it exists (topology-aware), or build from [`manifests/storageclass-cephrbd-multizone.yaml`](runbooks/openshift/manifests/storageclass-cephrbd-multizone.yaml)
-3. Set `topologyConstrainedPools` with one block pool per zone (`zone-a`, `zone-b`, `zone-c`)
-4. **Apply**: `oc apply -f manifests/storageclass-cephrbd-multizone.yaml`
+**Your cluster (resilient now):**
 
-Uses `volumeBindingMode: WaitForFirstConsumer` — PVCs provision in the same zone as the scheduled pod.
-
-Optional CSI check: `./01-verify-csi-rbd.sh`  
-Deploy: `./deploy-rbd.sh`
+```bash
+oc apply -f runbooks/openshift/manifests/storageclass-cephrbd-multizone-r.yaml
+./03-deploy-postgres.sh cephrbd-r
+```
 
 ---
 
@@ -136,10 +137,11 @@ node05  Ready    worker   70d   v1.28.2   10.0.0.5      zone-c
 
 ```bash
 ./deploy.sh          # CephFS — cephfs-multizone
-./deploy-rbd.sh      # RBD    — cephrbd-multizone
+./deploy-rbd.sh         # resilient — cephrbd-multizone-r
+./deploy-rbd-nr.sh      # non-resilient — cephrbd-multizone-nr
 ```
 
-Or interactively (prompts for `cephfs` or `cephrbd`):
+Or interactively (lists `cephfs`, `cephrbd-r`, `cephrbd-nr` that exist in cluster):
 
 ```bash
 ./03-deploy-postgres.sh
@@ -154,7 +156,8 @@ Manifests applied from [`manifests/`](runbooks/openshift/manifests/):
 | [`secret.yaml`](runbooks/openshift/manifests/secret.yaml) | `POSTGRESQL_PASSWORD` |
 | [`service.yaml`](runbooks/openshift/manifests/service.yaml) | Headless Service |
 | [`statefulset.yaml`](runbooks/openshift/manifests/statefulset.yaml) | StatefulSet using `cephfs-multizone` |
-| [`statefulset-rbd.yaml`](runbooks/openshift/manifests/statefulset-rbd.yaml) | StatefulSet using `cephrbd-multizone` |
+| [`statefulset-rbd.yaml`](runbooks/openshift/manifests/statefulset-rbd.yaml) | StatefulSet using `cephrbd-multizone-r` |
+| [`statefulset-rbd-nr.yaml`](runbooks/openshift/manifests/statefulset-rbd-nr.yaml) | StatefulSet using `cephrbd-multizone-nr` |
 | [`route.yaml`](runbooks/openshift/manifests/route.yaml) | Optional Route (not applied by default) |
 
 To also expose PostgreSQL via a Route:
@@ -199,8 +202,8 @@ postgres-2  1/1     Running   0          2m    10.129.2.7   node05    <none>    
 |-------|----------------|
 | **Password security** | Use *SealedSecrets*, *Vault*, or *OpenShift Secrets Encryption* in production. |
 | **CephFS backup** | Create a `VolumeSnapshotClass` and schedule snapshots (`kubectl snapshot`). |
-| **PostgreSQL high availability** | The model above creates **3 isolated databases**. For replication/clustering, use a PostgreSQL Operator and set `storageClassName` to `cephfs-multizone` or `cephrbd-multizone`. |
-| **Zone-local storage** | Requires ODF non-resilient per-zone pools — full procedure in [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md). |
+| **PostgreSQL high availability** | 3 isolated DBs per zone. Use `cephrbd-multizone-r` for Ceph replication, or `cephrbd-multizone-nr` with app-level HA. |
+| **Zone-local storage** | Use `cephrbd-multizone-nr` — [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md). Resilient pool: `cephrbd-multizone-r`. |
 | **Reclaim policy** | `Delete` removes the PV when the PVC is deleted. Use `Retain` if you want to keep the data. |
 | **Monitoring** | Add the `postgres_exporter` sidecar or deploy a Prometheus DaemonSet to scrape metrics. |
 | **CephFS tuning** | Check inter-zone latency; consider dedicated pools per zone if cross-zone traffic becomes a bottleneck. |
@@ -214,7 +217,8 @@ postgres-2  1/1     Running   0          2m    10.129.2.7   node05    <none>    
 ```
 runbooks/openshift/
 ├── deploy.sh                      # CephFS path (cephfs-multizone)
-├── deploy-rbd.sh                  # RBD path (cephrbd-multizone)
+├── deploy-rbd.sh                  # resilient (cephrbd-multizone-r)
+├── deploy-rbd-nr.sh               # non-resilient (cephrbd-multizone-nr)
 ├── STORAGECLASS.md                # manual CephFS StorageClass guide
 ├── STORAGECLASS-RBD.md            # manual RBD StorageClass guide
 ├── ZONE-LOCAL-RBD.md              # true zone-local RBD (ODF topology pools)
@@ -227,12 +231,14 @@ runbooks/openshift/
 ├── 06-cleanup.sh
 └── manifests/
     ├── storageclass-cephfs-multizone.yaml
-    ├── storageclass-cephrbd-multizone.yaml
+    ├── storageclass-cephrbd-multizone-r.yaml
+    ├── storageclass-cephrbd-multizone-nr.yaml
     ├── configmap.yaml
     ├── secret.yaml
     ├── service.yaml
     ├── statefulset.yaml           # cephfs-multizone
-    ├── statefulset-rbd.yaml       # cephrbd-multizone
+    ├── statefulset-rbd.yaml       # cephrbd-multizone-r
+    ├── statefulset-rbd-nr.yaml  # cephrbd-multizone-nr
     └── route.yaml
 ```
 
@@ -240,7 +246,7 @@ runbooks/openshift/
 
 ### 🎉  You now have:
 
-1. A **multi-zone StorageClass** (`cephfs-multizone` or `cephrbd-multizone`).  
+1. **StorageClasses** (`cephfs-multizone`, `cephrbd-multizone-r`, `cephrbd-multizone-nr`).  
 2. **Properly labeled nodes** (`topology.kubernetes.io/zone`).  
 3. A **PostgreSQL deployment** (3 replicas) with zone-aware pod placement — and zone-local block volumes when using RBD.  
 

@@ -2,7 +2,7 @@
 
 The CephFS StorageClass must be created **manually** once per cluster.
 
-> For **zone-local block volumes**, use [`cephrbd-multizone`](STORAGECLASS-RBD.md) instead.
+> For RBD block volumes, see [`STORAGECLASS-RBD.md`](STORAGECLASS-RBD.md) (`cephrbd-multizone-r` resilient, `cephrbd-multizone-nr` zone-local).
 
 > **CephFS and topology**  
 > The CephFS CSI driver (`openshift-storage.cephfs.csi.ceph.com`) does **not** support `WaitForFirstConsumer` or zone-pinned provisioning.  

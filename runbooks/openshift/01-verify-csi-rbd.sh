@@ -13,7 +13,6 @@ fi
 
 if ! oc get csidriver "$RBD_PROVISIONER" &>/dev/null; then
   echo "❌  CSIDriver '$RBD_PROVISIONER' not found." >&2
-  echo "    Install ODF with RBD enabled. Verify with: oc get csidrivers" >&2
   exit 1
 fi
 echo "✅  CSIDriver registered"
@@ -25,35 +24,32 @@ if [[ "$node_count" -eq 0 ]]; then
 fi
 echo "✅  RBD CSI driver registered on $node_count node(s)"
 
-if oc get storageclass ocs-storagecluster-ceph-non-resilient-rbd &>/dev/null; then
-  echo "✅  Topology-aware class found: ocs-storagecluster-ceph-non-resilient-rbd"
-  echo ""
-  echo "→ Use Path B (topology) in STORAGECLASS-RBD.md"
-  echo "  oc get storageclass ocs-storagecluster-ceph-non-resilient-rbd -o yaml \\"
-  echo "    | sed 's/name: ocs-storagecluster-ceph-non-resilient-rbd/name: cephrbd-multizone/' \\"
-  echo "    | oc apply -f -"
-  exit 0
-fi
-
-if oc get storageclass ocs-storagecluster-ceph-rbd &>/dev/null; then
-  echo "✅  Found ODF RBD StorageClass: ocs-storagecluster-ceph-rbd"
-  oc get storageclass ocs-storagecluster-ceph-rbd -o jsonpath='    clusterID={.parameters.clusterID}{"\n"}    pool={.parameters.pool}{"\n"}'
+echo ""
+echo "Resilient pool (cephrbd-multizone-r):"
+if oc get storageclass cephrbd-multizone-r &>/dev/null; then
+  echo "  ✅  already created"
+elif oc get storageclass ocs-storagecluster-ceph-rbd &>/dev/null; then
+  echo "  ⚠️  not found — create with:"
+  echo "     oc apply -f manifests/storageclass-cephrbd-multizone-r.yaml"
+else
+  echo "  ❌  ocs-storagecluster-ceph-rbd missing"
 fi
 
 echo ""
-echo "Ceph block pools:"
-oc get cephblockpool -n "$CEPH_NS" 2>/dev/null || echo "    (unable to list cephblockpool)"
-
-zone_pools=$(oc get cephblockpool -n "$CEPH_NS" -o json 2>/dev/null \
-  | jq -r '[.items[] | select(.spec.failureDomain // "" | test("zone"; "i"))] | length' || echo 0)
-
-if [[ "$zone_pools" -gt 0 ]]; then
-  echo ""
-  echo "→ Zone-level block pools detected — use Path B (topology) in STORAGECLASS-RBD.md"
+echo "Non-resilient pool (cephrbd-multizone-nr):"
+if oc get storageclass cephrbd-multizone-nr &>/dev/null; then
+  echo "  ✅  already created"
+elif oc get storageclass ocs-storagecluster-ceph-non-resilient-rbd &>/dev/null; then
+  echo "  ⚠️  not found — clone ODF SC:"
+  echo "     oc get sc ocs-storagecluster-ceph-non-resilient-rbd -o yaml \\"
+  echo "       | sed 's/name: ocs-storagecluster-ceph-non-resilient-rbd/name: cephrbd-multizone-nr/' \\"
+  echo "       | oc apply -f -"
 else
+  echo "  ⚠️  not available — enable cephNonResilientPools (see ZONE-LOCAL-RBD.md)"
   echo ""
-  echo "⚠️  No per-zone Ceph block pools (failureDomain is likely host-only)."
-  echo "→ Use Path A (simple) in STORAGECLASS-RBD.md:"
-  echo "  oc apply -f manifests/storageclass-cephrbd-multizone-simple.yaml"
-  echo "  # or clone ocs-storagecluster-ceph-rbd → cephrbd-multizone"
+  echo "  Ceph block pools:"
+  oc get cephblockpool -n "$CEPH_NS" 2>/dev/null || true
 fi
+
+echo ""
+echo "See STORAGECLASS-RBD.md to create both pools."

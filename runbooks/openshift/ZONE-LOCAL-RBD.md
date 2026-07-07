@@ -15,7 +15,7 @@ flowchart LR
   subgraph sched [Kubernetes scheduler]
     Pod[Pod scheduled to zone-a node]
   end
-  subgraph sc [StorageClass cephrbd-multizone]
+  subgraph sc [StorageClass cephrbd-multizone-nr]
     WFFC[WaitForFirstConsumer]
     TCP[topologyConstrainedPools]
   end
@@ -127,7 +127,7 @@ Verify:
 oc get nodes -L topology.kubernetes.io/zone
 ```
 
-> **Important:** `domainSegments` in the StorageClass must use the **same label key and values** as your nodes. If nodes use `us-east-1a` instead of `zone-a`, update [`manifests/storageclass-cephrbd-multizone.yaml`](manifests/storageclass-cephrbd-multizone.yaml) accordingly.
+> **Important:** `domainSegments` in the StorageClass must use the **same label key and values** as your nodes. If nodes use `us-east-1a` instead of `zone-a`, update [`manifests/storageclass-cephrbd-multizone-nr.yaml`](manifests/storageclass-cephrbd-multizone-nr.yaml) accordingly.
 
 ---
 
@@ -168,30 +168,30 @@ Note `volumeBindingMode: WaitForFirstConsumer` and the `topologyConstrainedPools
 
 ---
 
-## 3 — Create `cephrbd-multizone` StorageClass
+## 3 — Create `cephrbd-multizone-nr` StorageClass
 
 ### Option A — Clone ODF's class (recommended)
 
 ```bash
 oc get storageclass ocs-storagecluster-ceph-non-resilient-rbd -o yaml \
-  | sed 's/name: ocs-storagecluster-ceph-non-resilient-rbd/name: cephrbd-multizone/' \
+  | sed 's/name: ocs-storagecluster-ceph-non-resilient-rbd/name: cephrbd-multizone-nr/' \
   | oc apply -f -
 ```
 
 ### Option B — Edit the topology template
 
 1. Copy `topologyConstrainedPools` from `ocs-storagecluster-ceph-non-resilient-rbd`.
-2. Edit [`manifests/storageclass-cephrbd-multizone.yaml`](manifests/storageclass-cephrbd-multizone.yaml).
+2. Edit [`manifests/storageclass-cephrbd-multizone-nr.yaml`](manifests/storageclass-cephrbd-multizone-nr.yaml).
 3. Replace `<CLUSTER_ID>`, `<POOL>`, `<POOL_ZONE_*>` and align `domainSegments` with your node labels.
 
 ```bash
-oc apply -f manifests/storageclass-cephrbd-multizone.yaml
+oc apply -f manifests/storageclass-cephrbd-multizone-nr.yaml
 ```
 
 Verify:
 
 ```bash
-oc get storageclass cephrbd-multizone -o yaml
+oc get storageclass cephrbd-multizone-nr -o yaml
 ```
 
 Must have:
@@ -218,7 +218,7 @@ metadata:
   namespace: sc-test
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: cephrbd-multizone
+  storageClassName: cephrbd-multizone-nr
   resources:
     requests:
       storage: 1Gi
@@ -261,12 +261,12 @@ oc delete namespace sc-test
 ## 5 — Deploy PostgreSQL
 
 ```bash
-./deploy-rbd.sh
+./deploy-rbd-nr.sh
 # or
 ./03-deploy-postgres.sh cephrbd
 ```
 
-The StatefulSet ([`manifests/statefulset-rbd.yaml`](manifests/statefulset-rbd.yaml)) uses `cephrbd-multizone`. With `WaitForFirstConsumer`, each `postgres-N` PVC should provision in the zone where that pod is scheduled.
+The StatefulSet ([`manifests/statefulset-rbd-nr.yaml`](manifests/statefulset-rbd-nr.yaml)) uses `cephrbd-multizone-nr`. With `WaitForFirstConsumer`, each `postgres-N` PVC should provision in the zone where that pod is scheduled.
 
 Verify:
 
@@ -303,7 +303,7 @@ Useful commands:
 ```bash
 oc get events -n openshift-storage --sort-by='.lastTimestamp' | tail -20
 oc describe pvc <name> -n pg-multizone
-oc get storageclass cephrbd-multizone -o jsonpath='{.parameters.topologyConstrainedPools}' | jq .
+oc get storageclass cephrbd-multizone-nr -o jsonpath='{.parameters.topologyConstrainedPools}' | jq .
 ```
 
 ---
@@ -311,7 +311,7 @@ oc get storageclass cephrbd-multizone -o jsonpath='{.parameters.topologyConstrai
 ## Disable and rollback
 
 ```bash
-# 1. Delete workloads using cephrbd-multizone
+# 1. Delete workloads using cephrbd-multizone-nr
 oc delete namespace pg-multizone
 
 # 2. Disable non-resilient pools on StorageCluster
@@ -319,7 +319,7 @@ oc patch storagecluster ocs-storagecluster -n openshift-storage --type json \
   --patch '[{"op": "replace", "path": "/spec/managedResources/cephNonResilientPools/enable", "value": false}]'
 
 # 3. Remove custom StorageClass
-oc delete storageclass cephrbd-multizone
+oc delete storageclass cephrbd-multizone-nr
 ```
 
 ---
