@@ -1,0 +1,11 @@
+➜  openshift git:(main) oc get csidriver openshift-storage.rbd.csi.ceph.com
+NAME                                 ATTACHREQUIRED   PODINFOONMOUNT   STORAGECAPACITY   TOKENREQUESTS   REQUIRESREPUBLISH   MODES        AGE
+openshift-storage.rbd.csi.ceph.com   true             false            false             <unset>         false               Persistent   321d
+➜  openshift git:(main) oc get storageclass ocs-storagecluster-ceph-rbd -o jsonpath='clusterID={.parameters.clusterID}{"\n"}pool={.parameters.pool}{"\n"}'
+clusterID=openshift-storage
+pool=ocs-storagecluster-cephblockpool
+➜  openshift git:(main) oc get cephblockpool -n openshift-storage
+NAME                               PHASE   TYPE         FAILUREDOMAIN   AGE
+builtin-mgr                        Ready   Replicated   host            321d
+ocs-storagecluster-cephblockpool   Ready   Replicated   host            321d
+➜  openshift git:(main)
