@@ -4,5 +4,5 @@ metadata:
   name: pg-config
   namespace: pg-multizone
 data:
-  POSTGRESQL_DB: mydb
+  POSTGRESQL_DATABASE: mydb
   POSTGRESQL_USER: admin
