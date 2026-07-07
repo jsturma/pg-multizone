@@ -10,6 +10,7 @@ Two storage backends are supported:
 | `cephfs-multizone` | CephFS | No — shared filesystem | [`STORAGECLASS.md`](runbooks/openshift/STORAGECLASS.md) |
 | `cephrbd-multizone-r` | RBD resilient (3-way pool) | No | [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md) |
 | `cephrbd-multizone-nr` | RBD non-resilient (zone-local) | Yes — [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md) | [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md) |
+| `ceph-external-zone-nr` | External Ceph zone-local RBD | Yes — [`External-Ceph-Cluster.md`](External-Ceph-Cluster.md) | [`External-Ceph-Cluster.md`](External-Ceph-Cluster.md) |
 
 > **Platform support**  
 > This project currently supports **OpenShift only**. The runbooks use OpenShift-specific resources (OCS, `oc`, Routes) and have been tested against OpenShift Container Storage.  
@@ -58,6 +59,21 @@ cd runbooks/openshift
 **1.** Create both ODF NR pools and StorageClass — [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)
 
 **2.** Deploy: `./deploy-rbd-nr.sh`
+
+### Option D — External Ceph zone-local (`ceph-external-zone-nr`)
+
+When ODF cannot create per-zone pools (e.g. `flexibleScaling: true`), deploy or reuse an external Ceph cluster — [`External-Ceph-Cluster.md`](External-Ceph-Cluster.md).
+
+**1.** Complete Ceph + CSI steps in the guide (Steps F.1–F.9 or 1, then 2–4).
+
+**2.** Deploy PostgreSQL:
+
+```bash
+cd runbooks/openshift
+oc apply -f manifests/configmap.yaml -f manifests/secret.yaml -f manifests/service.yaml
+oc apply -f manifests/statefulset-external-rbd-nr.yaml
+./04-verify.sh
+```
 
 ### Steps reference
 
@@ -233,12 +249,14 @@ runbooks/openshift/
     ├── storageclass-cephfs-multizone.yaml
     ├── storageclass-cephrbd-multizone-r.yaml
     ├── storageclass-cephrbd-multizone-nr.yaml
+    ├── storageclass-ceph-external-zone-nr.yaml   # external Ceph — External-Ceph-Cluster.md
     ├── configmap.yaml
     ├── secret.yaml
     ├── service.yaml
     ├── statefulset.yaml           # cephfs-multizone
     ├── statefulset-rbd.yaml       # cephrbd-multizone-r
     ├── statefulset-rbd-nr.yaml  # cephrbd-multizone-nr
+    ├── statefulset-external-rbd-nr.yaml  # ceph-external-zone-nr
     └── route.yaml
 ```
 

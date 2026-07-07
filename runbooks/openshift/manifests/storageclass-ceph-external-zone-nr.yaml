@@ -1,0 +1,34 @@
+# Zone-local RBD via external Ceph + rbd.csi.ceph.com
+# Prerequisites: external-ceph-csi namespace, CSI driver, per-zone pools rbd-zone-{a,b,c}
+# See External-Ceph-Cluster.md
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ceph-external-zone-nr
+provisioner: rbd.csi.ceph.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+parameters:
+  clusterID: ceph-external
+  pool: rbd-zone-a
+  imageFormat: "2"
+  imageFeatures: layering,deep-flatten,exclusive-lock,object-map,fast-diff
+  csi.storage.k8s.io/provisioner-secret-name: csi-rbd-secret
+  csi.storage.k8s.io/provisioner-secret-namespace: external-ceph-csi
+  csi.storage.k8s.io/node-stage-secret-name: csi-rbd-secret
+  csi.storage.k8s.io/node-stage-secret-namespace: external-ceph-csi
+  csi.storage.k8s.io/fstype: ext4
+  topologyConstrainedPools: |-
+    [
+      {"poolName":"rbd-zone-a","domainSegments":[{"domainLabel":"topology.kubernetes.io/zone","value":"zone-a"}]},
+      {"poolName":"rbd-zone-b","domainSegments":[{"domainLabel":"topology.kubernetes.io/zone","value":"zone-b"}]},
+      {"poolName":"rbd-zone-c","domainSegments":[{"domainLabel":"topology.kubernetes.io/zone","value":"zone-c"}]}
+    ]
+allowedTopologies:
+  - matchLabelExpressions:
+      - key: topology.kubernetes.io/zone
+        values:
+          - zone-a
+          - zone-b
+          - zone-c
