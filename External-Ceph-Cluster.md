@@ -208,12 +208,18 @@ sudo dnf install -y podman lvm2 chrony
 sudo systemctl enable --now chrony
 
 # Ubuntu
-# sudo apt update && sudo apt install -y podman lvm2 chrony
+# sudo apt update && sudo apt install -y podman lvm2 chrony docker.io
 # sudo systemctl enable --now chrony
+# sudo systemctl enable --now docker   # cephadm on Ubuntu typically uses Docker
 
+# Firewall — RHEL / Rocky (firewalld)
 sudo firewall-cmd --permanent --add-port=6789/tcp
 sudo firewall-cmd --permanent --add-port=6800-7300/tcp
 sudo firewall-cmd --reload
+
+# Firewall — Ubuntu (ufw), if enabled
+# sudo ufw allow 6789/tcp
+# sudo ufw allow 6800:7300/tcp
 
 lsblk   # confirm raw OSD device (e.g. /dev/sdb, no mount)
 ```
@@ -232,17 +238,43 @@ EOF
 
 ### F.2 Install cephadm on the first node
 
-On **`ceph-node1`** only:
+On **`ceph-node1`** only. Pick the block for your OS (all three are supported):
+
+**RHEL 9 / Rocky 9** — `dnf` + Ceph Squid repo:
 
 ```bash
 CEPH_RELEASE=19   # Squid — match https://docs.ceph.com/en/latest/releases/
 
 sudo dnf install -y centos-release-ceph-squid
 sudo dnf install -y cephadm
+```
 
-# Alternative installer:
-# curl --silent --remote-name --location https://github.com/ceph/ceph/raw/refs/heads/main/src/cephadm/cephadm
-# chmod +x cephadm && sudo ./cephadm add-repo --release squid && sudo ./cephadm install
+**Ubuntu 22.04+** — official `cephadm` installer (no `centos-release-ceph-squid` on Ubuntu):
+
+```bash
+CEPH_RELEASE=squid   # release name for add-repo
+
+curl --silent --remote-name --location \
+  https://github.com/ceph/ceph/raw/refs/heads/main/src/cephadm/cephadm
+chmod +x cephadm
+sudo ./cephadm add-repo --release "${CEPH_RELEASE}"
+sudo ./cephadm install
+```
+
+**Any distro** — same curl installer works on RHEL, Rocky, and Ubuntu if the `dnf` path fails:
+
+```bash
+curl --silent --remote-name --location \
+  https://github.com/ceph/ceph/raw/refs/heads/main/src/cephadm/cephadm
+chmod +x cephadm
+sudo ./cephadm add-repo --release squid
+sudo ./cephadm install
+```
+
+Verify:
+
+```bash
+sudo cephadm version
 ```
 
 ### F.3 Bootstrap the cluster
