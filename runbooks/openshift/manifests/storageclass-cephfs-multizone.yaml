@@ -1,0 +1,14 @@
+# Copy clusterID, fsName, and pool from the ODF default StorageClass
+# (ocs-storagecluster-cephfs). See STORAGECLASS.md for step-by-step instructions.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: cephfs-multizone
+provisioner: openshift-storage.cephfs.csi.ceph.com
+parameters:
+  clusterID: <CLUSTER_ID>
+  fsName: <FS_NAME>
+  pool: <POOL>
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: Immediate

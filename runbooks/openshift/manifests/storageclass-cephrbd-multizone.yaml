@@ -1,0 +1,50 @@
+# Copy parameters from the ODF RBD StorageClass (prefer ocs-storagecluster-ceph-non-resilient-rbd
+# if topology pools exist). See STORAGECLASS-RBD.md for step-by-step instructions.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: cephrbd-multizone
+provisioner: openshift-storage.rbd.csi.ceph.com
+parameters:
+  clusterID: <CLUSTER_ID>
+  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/controller-expand-secret-namespace: openshift-storage
+  csi.storage.k8s.io/fstype: ext4
+  csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
+  csi.storage.k8s.io/node-stage-secret-namespace: openshift-storage
+  csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/provisioner-secret-namespace: openshift-storage
+  imageFeatures: layering,deep-flatten,exclusive-lock,object-map,fast-diff
+  imageFormat: "2"
+  pool: <POOL>
+  topologyConstrainedPools: |-
+    [
+      {
+        "poolName": "<POOL_ZONE_A>",
+        "domainSegments": [
+          {"domainLabel": "topology.kubernetes.io/zone", "value": "zone-a"}
+        ]
+      },
+      {
+        "poolName": "<POOL_ZONE_B>",
+        "domainSegments": [
+          {"domainLabel": "topology.kubernetes.io/zone", "value": "zone-b"}
+        ]
+      },
+      {
+        "poolName": "<POOL_ZONE_C>",
+        "domainSegments": [
+          {"domainLabel": "topology.kubernetes.io/zone", "value": "zone-c"}
+        ]
+      }
+    ]
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+allowedTopologies:
+  - matchLabelExpressions:
+      - key: topology.kubernetes.io/zone
+        values:
+          - zone-a
+          - zone-b
+          - zone-c
