@@ -1,15 +1,9 @@
-# Simple RBD StorageClass — no per-zone Ceph pools (failureDomain: host).
-# Use when: oc get cephblockpool shows only host-level pools and
-# ocs-storagecluster-ceph-non-resilient-rbd does NOT exist.
-#
-# Zone spread for PostgreSQL is via node labels + pod affinity only;
-# volumes are NOT pinned to a zone.
-#
-# See STORAGECLASS-RBD.md § "Cluster without per-zone pools".
+# Resilient RBD — 3-way replicated pool (ocs-storagecluster-cephblockpool).
+# See STORAGECLASS-RBD.md § "Resilient pool".
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: cephrbd-multizone
+  name: cephrbd-multizone-r
 provisioner: openshift-storage.rbd.csi.ceph.com
 parameters:
   clusterID: openshift-storage
