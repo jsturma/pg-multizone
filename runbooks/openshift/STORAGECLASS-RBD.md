@@ -6,7 +6,68 @@ Unlike CephFS, the RBD CSI driver supports topology-aware provisioning with `Wai
 > **Prerequisites**
 > - ODF RBD CSI driver: `openshift-storage.rbd.csi.ceph.com`
 > - Nodes labeled `topology.kubernetes.io/zone=zone-a|zone-b|zone-c` (run [`02-label-nodes.sh`](02-label-nodes.sh) first)
-> - Per-zone Ceph block pools (ODF creates these when multi-zone topology is configured)
+> - Per-zone Ceph block pools — **only for the topology template** (see below)
+
+---
+
+## Which path matches your cluster?
+
+Check Ceph block pools:
+
+```bash
+oc get cephblockpool -n openshift-storage
+oc get storageclass | grep rbd
+```
+
+| What you see | Path | Zone-local PVCs |
+|--------------|------|-----------------|
+| Only `ocs-storagecluster-cephblockpool` with `FAILUREDOMAIN: host` | [**Simple**](#path-a--simple-no-per-zone-pools) | No |
+| `ocs-storagecluster-ceph-non-resilient-rbd` exists, or per-zone pools | [**Topology**](#path-b--topology-per-zone-pools) | Yes |
+
+### Path A — Simple (no per-zone pools)
+
+Your cluster matches this if `oc get cephblockpool` shows only host-level pools, for example:
+
+```
+NAME                               PHASE   TYPE         FAILUREDOMAIN
+ocs-storagecluster-cephblockpool   Ready   Replicated   host
+```
+
+**Fastest — clone the ODF default RBD class:**
+
+```bash
+oc get storageclass ocs-storagecluster-ceph-rbd -o yaml \
+  | sed 's/name: ocs-storagecluster-ceph-rbd/name: cephrbd-multizone/' \
+  | oc apply -f -
+```
+
+**Or apply the bundled simple template** (same parameters as a standard ODF RBD cluster):
+
+```bash
+oc apply -f manifests/storageclass-cephrbd-multizone-simple.yaml
+oc get storageclass cephrbd-multizone -o yaml
+```
+
+Uses `volumeBindingMode: Immediate` — no `topologyConstrainedPools`.  
+PostgreSQL pods can still be spread across zones via [`02-label-nodes.sh`](02-label-nodes.sh); RBD volumes use the shared replicated pool.
+
+Then deploy: `./deploy-rbd.sh` or `./03-deploy-postgres.sh cephrbd`
+
+---
+
+### Path B — Topology (per-zone pools)
+
+Required for **zone-local block volumes** with `WaitForFirstConsumer`.
+
+**Full guide:** [`ZONE-LOCAL-RBD.md`](ZONE-LOCAL-RBD.md) — prerequisites, ODF `cephNonResilientPools`, StorageClass, verification, and troubleshooting.
+
+Quick summary:
+
+1. Label nodes with `topology.kubernetes.io/zone`
+2. Enable non-resilient pools: `oc patch storagecluster ocs-storagecluster … cephNonResilientPools/enable: true`
+3. Wait for per-zone `cephblockpool` resources and `ocs-storagecluster-ceph-non-resilient-rbd`
+4. Clone or apply `cephrbd-multizone` StorageClass
+5. Deploy with `./deploy-rbd.sh`
 
 ---
 
@@ -17,7 +78,7 @@ oc get csidriver openshift-storage.rbd.csi.ceph.com
 oc get pods -n openshift-storage | grep -i rbd
 ```
 
-Optional automated check:
+Optional automated check (recommends simple vs topology path):
 
 ```bash
 ./01-verify-csi-rbd.sh
@@ -26,6 +87,8 @@ Optional automated check:
 ---
 
 ## Step 2 — Check for an existing topology-aware StorageClass
+
+Skip this if you already used [Path A — Simple](#path-a--simple-no-per-zone-pools).
 
 ODF may already expose a non-resilient, topology-constrained RBD class after zone labels are applied:
 
@@ -67,7 +130,7 @@ oc get cephblockpool -n openshift-storage
 # or inspect topologyConstrainedPools on ocs-storagecluster-ceph-non-resilient-rbd if present
 ```
 
-Edit [`manifests/storageclass-cephrbd-multizone.yaml`](manifests/storageclass-cephrbd-multizone.yaml):
+Edit [`manifests/storageclass-cephrbd-multizone.yaml`](manifests/storageclass-cephrbd-multizone.yaml) (topology template only):
 
 | Placeholder | Source |
 |-------------|--------|
@@ -88,16 +151,24 @@ Copy any `csi.storage.k8s.io/*` secret parameters from the ODF default class if 
 ## Step 4 — Apply and verify
 
 ```bash
-oc apply -f manifests/storageclass-cephrbd-multizone.yaml
+oc apply -f manifests/storageclass-cephrbd-multizone.yaml   # topology
+# or
+oc apply -f manifests/storageclass-cephrbd-multizone-simple.yaml  # simple
 oc get storageclass cephrbd-multizone -o yaml
 ```
 
-Confirm:
+Confirm (topology path):
 
 - `provisioner` is `openshift-storage.rbd.csi.ceph.com`
 - `volumeBindingMode` is `WaitForFirstConsumer`
 - `topologyConstrainedPools` lists one pool per zone
 - `allowedTopologies` matches your node zone labels
+
+Confirm (simple path):
+
+- `volumeBindingMode` is `Immediate`
+- `pool` is `ocs-storagecluster-cephblockpool` (or your cluster's RBD pool)
+- no `topologyConstrainedPools`
 
 ---
 
@@ -171,9 +242,10 @@ oc delete namespace sc-test
 | | **cephfs-multizone** | **cephrbd-multizone** |
 |---|---|---|
 | Provisioner | `openshift-storage.cephfs.csi.ceph.com` | `openshift-storage.rbd.csi.ceph.com` |
-| Binding mode | `Immediate` | `WaitForFirstConsumer` |
-| Zone-local volume | No (shared filesystem) | Yes (per-zone block pool) |
+| Binding mode | `Immediate` | `Immediate` (simple) or `WaitForFirstConsumer` (topology) |
+| Zone-local volume | No (shared filesystem) | No (simple) / Yes (topology) |
 | Guide | [`STORAGECLASS.md`](STORAGECLASS.md) | this file |
+| SC manifest | `storageclass-cephfs-multizone.yaml` | `storageclass-cephrbd-multizone-simple.yaml` or `-multizone.yaml` |
 | Deploy script | [`deploy.sh`](deploy.sh) | [`deploy-rbd.sh`](deploy-rbd.sh) |
 
 ---

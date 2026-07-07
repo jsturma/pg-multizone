@@ -1,5 +1,6 @@
-# Copy parameters from the ODF RBD StorageClass (prefer ocs-storagecluster-ceph-non-resilient-rbd
-# if topology pools exist). See STORAGECLASS-RBD.md for step-by-step instructions.
+# Topology-aware RBD StorageClass — requires per-zone Ceph block pools.
+# Use when: ocs-storagecluster-ceph-non-resilient-rbd exists, or cephblockpool
+# lists zone-specific pools. See STORAGECLASS-RBD.md.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:

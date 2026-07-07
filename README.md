@@ -8,7 +8,7 @@ Two storage backends are supported:
 | StorageClass | Backend | Zone-local volumes | Guide |
 |--------------|---------|-------------------|-------|
 | `cephfs-multizone` | CephFS | No — shared filesystem | [`STORAGECLASS.md`](runbooks/openshift/STORAGECLASS.md) |
-| `cephrbd-multizone` | RBD block | Yes — `WaitForFirstConsumer` + topology pools | [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md) |
+| `cephrbd-multizone` | RBD block | Yes — see [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md) | [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md) |
 
 > **Platform support**  
 > This project currently supports **OpenShift only**. The runbooks use OpenShift-specific resources (OCS, `oc`, Routes) and have been tested against OpenShift Container Storage.  
@@ -95,7 +95,8 @@ Optional CSI check: `./01-verify-csi.sh`
 
 ## 1️⃣b  Create the **`cephrbd-multizone` StorageClass** (manual)
 
-Follow [`runbooks/openshift/STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md).
+- **Simple** (no zone-local volumes): [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md) Path A  
+- **Zone-local RBD** (full ODF setup): [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)
 
 Summary:
 
@@ -199,7 +200,7 @@ postgres-2  1/1     Running   0          2m    10.129.2.7   node05    <none>    
 | **Password security** | Use *SealedSecrets*, *Vault*, or *OpenShift Secrets Encryption* in production. |
 | **CephFS backup** | Create a `VolumeSnapshotClass` and schedule snapshots (`kubectl snapshot`). |
 | **PostgreSQL high availability** | The model above creates **3 isolated databases**. For replication/clustering, use a PostgreSQL Operator and set `storageClassName` to `cephfs-multizone` or `cephrbd-multizone`. |
-| **Zone-local storage** | Prefer **`cephrbd-multizone`** (RBD) over CephFS when volumes must be provisioned in the pod's zone. |
+| **Zone-local storage** | Requires ODF non-resilient per-zone pools — full procedure in [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md). |
 | **Reclaim policy** | `Delete` removes the PV when the PVC is deleted. Use `Retain` if you want to keep the data. |
 | **Monitoring** | Add the `postgres_exporter` sidecar or deploy a Prometheus DaemonSet to scrape metrics. |
 | **CephFS tuning** | Check inter-zone latency; consider dedicated pools per zone if cross-zone traffic becomes a bottleneck. |
@@ -216,6 +217,7 @@ runbooks/openshift/
 ├── deploy-rbd.sh                  # RBD path (cephrbd-multizone)
 ├── STORAGECLASS.md                # manual CephFS StorageClass guide
 ├── STORAGECLASS-RBD.md            # manual RBD StorageClass guide
+├── ZONE-LOCAL-RBD.md              # true zone-local RBD (ODF topology pools)
 ├── 01-verify-csi.sh
 ├── 01-verify-csi-rbd.sh
 ├── 02-label-nodes.sh
