@@ -43,12 +43,12 @@ spec:
           mountPath: /var/lib/pgsql/data
         livenessProbe:
           exec:
-            command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
+            command: ["pg_isready", "-U", "$(POSTGRESQL_USER)"]
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           exec:
-            command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
+            command: ["pg_isready", "-U", "$(POSTGRESQL_USER)"]
           initialDelaySeconds: 5
           periodSeconds: 5
   volumeClaimTemplates:
