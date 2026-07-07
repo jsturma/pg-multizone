@@ -89,6 +89,18 @@ oc get storagecluster ocs-storagecluster -n openshift-storage \
 
 If `flexibleScaling=true` or `failureDomain=host`, zone-level non-resilient pools are **not supported without redeploying ODF** with zone topology at install time. See [Red Hat: ODF topology considerations](https://developers.redhat.com/articles/2024/06/19/red-hat-openshift-data-foundation-topology-considerations).
 
+**Example — blocked profile** (`flexibleScaling: true`, `failureDomainKey: kubernetes.io/hostname`):
+
+```
+flexibleScaling: true
+failureDomain: host
+failureDomainKey: kubernetes.io/hostname
+cephNonResilientPools: {}          # not enabled
+ocs-storagecluster-ceph-non-resilient-rbd → not found
+```
+
+Cluster-specific walkthrough: [`exchange/SOLUTION-ZONAL-RBD.md`](../../exchange/SOLUTION-ZONAL-RBD.md).
+
 **Green light** — you can proceed when:
 
 - Nodes span **≥ 3 zones** with `topology.kubernetes.io/zone` set
