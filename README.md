@@ -13,6 +13,16 @@ All scripts and manifests live under [`runbooks/openshift/`](runbooks/openshift/
 | `cephrbd-multizone-nr` | RBD non-resilient (ODF) | Yes | `openshift-storage.rbd.csi.ceph.com` | [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md) |
 | `ceph-external-zone-nr` | External Ceph RBD | Yes | `rbd.csi.ceph.com` | [`External-Ceph-Cluster.md`](External-Ceph-Cluster.md) |
 
+> **Warning — `cephrbd-multizone-nr` (ODF non-resilient) changes the cluster**  
+> This path is **not** a StorageClass-only step. It requires **ODF StorageCluster changes** and correct **zone topology at install time**:
+>
+> - **Patch** `StorageCluster` to enable `cephNonResilientPools` — ODF then creates **new per-zone replica-1** `CephBlockPool` resources.
+> - **Label nodes** with `topology.kubernetes.io/zone` **before** enabling non-resilient pools (order matters).
+> - **Blocked** on many existing clusters: `flexibleScaling: true` with `failureDomain: host` cannot create zone pools without **redeploying ODF** with zone topology. Diagnose first — [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md#0--diagnose-your-cluster).
+> - **Data risk:** replica-1 volumes — OSD loss in a zone means **data loss** for volumes in that zone.
+>
+> If diagnosis shows NR pools are not supported, use **`cephrbd-multizone-r`** (resilient, no cluster change) or **Option D** — external Ceph ([`External-Ceph-Cluster.md`](External-Ceph-Cluster.md)).
+
 > **Platform support**  
 > This project currently supports **OpenShift only**. The runbooks use OpenShift-specific resources (OCS, `oc`, Routes) and have been tested against OpenShift Container Storage.  
 > Support for other Kubernetes platforms (vanilla Kubernetes, AKS, EKS, GKE, …) is **planned**.
@@ -66,7 +76,17 @@ cd runbooks/openshift
 
 ### Option C — RBD zone-local via ODF (`cephrbd-multizone-nr`)
 
-**1.** Create per-zone ODF pools and StorageClass — [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)
+> **Cluster changes required.** Read the warning above and run diagnosis in [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md#0--diagnose-your-cluster) before proceeding.
+
+**1.** Label nodes, enable ODF non-resilient pools, create StorageClass — [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)
+
+Quick diagnosis:
+
+```bash
+oc get storagecluster ocs-storagecluster -n openshift-storage \
+  -o jsonpath='flexibleScaling={.spec.flexibleScaling}{"\n"}failureDomain={.status.failureDomain}{"\n"}'
+oc get storageclass ocs-storagecluster-ceph-non-resilient-rbd 2>/dev/null || echo "NR StorageClass not found"
+```
 
 **2.** Deploy:
 
@@ -137,7 +157,9 @@ Documented in [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md):
 | Class | Purpose |
 |-------|---------|
 | `cephrbd-multizone-r` | Resilient 3-way replicated pool — works on most ODF clusters today |
-| `cephrbd-multizone-nr` | Zone-local, replica-1 — requires per-zone ODF pools ([`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)) |
+| `cephrbd-multizone-nr` | Zone-local, replica-1 — **patches StorageCluster**, creates per-zone ODF pools ([`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)) |
+
+> **`cephrbd-multizone-nr` only** — enables `cephNonResilientPools` on the ODF `StorageCluster`, waits for new zone-scoped `CephBlockPool` objects, then clones `ocs-storagecluster-ceph-non-resilient-rbd`. Not available when `flexibleScaling: true` / `failureDomain: host`; use `cephrbd-multizone-r` or [Option D](External-Ceph-Cluster.md) instead.
 
 Quick start (resilient):
 
@@ -263,7 +285,7 @@ oc delete namespace external-ceph-csi
 | **Password security** | Use SealedSecrets, Vault, or OpenShift Secrets Encryption in production. |
 | **CephFS backup** | Create a `VolumeSnapshotClass` and schedule snapshots. |
 | **PostgreSQL HA** | 3 isolated DBs per zone. Use `cephrbd-multizone-r` for Ceph replication, or zone-local RBD with app-level HA. |
-| **Zone-local storage** | ODF: `cephrbd-multizone-nr` ([`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)). External: `ceph-external-zone-nr` ([`External-Ceph-Cluster.md`](External-Ceph-Cluster.md)). |
+| **Zone-local storage** | ODF: `cephrbd-multizone-nr` — **requires StorageCluster patch** and zone topology ([`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md)). External: `ceph-external-zone-nr` when ODF NR is blocked ([`External-Ceph-Cluster.md`](External-Ceph-Cluster.md)). |
 | **Resilient storage** | `cephrbd-multizone-r` — replicas across zones, not zone-pinned. |
 | **Reclaim policy** | `Delete` removes the PV when the PVC is deleted. Use `Retain` to keep data. |
 | **Monitoring** | Add `postgres_exporter` or Prometheus scraping. |
