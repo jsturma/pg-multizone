@@ -75,6 +75,7 @@ Fill this in as you work; you need every row before Step 2.
 | CSI user key | `(secret)` | `ceph auth get-key client.csi-rbd-external` |
 | `clusterID` in ConfigMap | `ceph-external` | Fixed in this guide — keep consistent with StorageClass |
 | StorageClass name | `ceph-external-zone-nr` | [`manifests/storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml) |
+| Ceph version | `20.2.x` Tentacle (example) | F.2 — latest Tentacle patch from [download.ceph.com](https://download.ceph.com/); confirm with `ceph version` after bootstrap |
 
 ---
 
@@ -167,6 +168,8 @@ done
 
 Deploy a **standalone Ceph cluster** on three Linux hosts with zone topology from day one. OpenShift connects via Ceph-CSI in Step 2 — no ODF required on the storage nodes.
 
+> **Recommended release:** [**Tentacle**](https://docs.ceph.com/en/tentacle/) (Ceph 20.x) — the current stable major release for fresh deployments. F.2 installs the latest Tentacle patch from [download.ceph.com](https://download.ceph.com/).
+
 ### Lab topology
 
 | Node | Example hostname | Zone label | Role |
@@ -188,29 +191,50 @@ zone-a (ceph-node1)     zone-b (ceph-node2)     zone-c (ceph-node3)
 
 ### Node requirements
 
+Aligned with [Ceph Tentacle OS recommendations](https://docs.ceph.com/en/tentacle/start/os-recommendations/) and the [platform matrix](https://docs.ceph.com/en/latest/start/os-recommendations/). Use the **same OS major version on all three nodes**.
+
+| Distribution | Version | Tentacle (20.2.z) | Notes |
+|--------------|---------|-------------------|-------|
+| **RHEL** | 9.x | Package + container host | `dnf` path in F.2 |
+| **Rocky Linux** | 9.x | Container host | `dnf` or universal F.2 path |
+| **Rocky Linux** | 10.x | Package + container host (≥ **20.2.2**) | `dnf` path in F.2 |
+| **Ubuntu** | 22.04 LTS | Package + container host | Universal F.2 path; Podman |
+| **Ubuntu** | 24.04 LTS | Container host | Universal F.2 path; Podman |
+| CentOS Stream | 9 | Package + container host | Same as RHEL 9 |
+
 | Item | Requirement |
 |------|-------------|
-| OS | RHEL 9, Rocky 9, or Ubuntu 22.04+ (x86_64) |
-| CPU / RAM | 4 vCPU, 8 GiB RAM minimum per node (lab) |
-| Disk | **One unused raw device per node** for OSD (e.g. `/dev/sdb`) — no filesystem |
-| Network | Static IPs; nodes reach each other; workers reach mon IPs on **6789** |
-| Time | Chrony/NTP synced |
-| Container runtime | Podman (RHEL) or Docker (Ubuntu) |
-| Access | `root` or passwordless `sudo` on all three nodes |
+| **Architecture** | `x86_64` (64-bit Intel/AMD) |
+| **CPU / RAM** | 4 vCPU, 8 GiB RAM minimum per node (lab) |
+| **Disk** | **One unused raw device per node** for OSD (e.g. `/dev/sdb`) — no filesystem |
+| **Network** | Static IPs; nodes reach each other; workers reach mon IPs on **6789** |
+| **Time** | Chrony/NTP synced |
+| **Container runtime** | **Podman** on all distros — do not install Docker |
+| **Access** | `root` or passwordless `sudo` on all three nodes |
+| **Not supported** | Ubuntu 20.04 (EOL for Tentacle), Windows, mixed OS majors in one cluster |
+
+Verify OS before F.1:
+
+```bash
+source /etc/os-release
+echo "${PRETTY_NAME} — ${VERSION_ID}"
+uname -m   # expect x86_64
+```
 
 ### F.1 Prepare all three nodes
 
 Run on **each** node (`ceph-node1`, `ceph-node2`, `ceph-node3`):
 
 ```bash
-# RHEL / Rocky
+# RHEL 9 / Rocky Linux 9 or 10
 sudo dnf install -y podman lvm2 chrony
 sudo systemctl enable --now chrony
 
-# Ubuntu
-# sudo apt update && sudo apt install -y podman lvm2 chrony docker.io
-# sudo systemctl enable --now chrony
-# sudo systemctl enable --now docker   # cephadm on Ubuntu typically uses Docker
+# Ubuntu 22.04 / 24.04 LTS — Podman only (do not install docker.io)
+sudo apt update && sudo apt install -y podman lvm2 chrony
+sudo systemctl enable --now chrony
+# If Docker was ever installed, remove it so cephadm does not pick it:
+# sudo apt remove -y docker.io docker-ce docker-ce-cli containerd.io 2>/dev/null || true
 
 # Firewall — RHEL / Rocky (firewalld)
 sudo firewall-cmd --permanent --add-port=6789/tcp
@@ -238,44 +262,58 @@ EOF
 
 ### F.2 Install cephadm on the first node
 
-On **`ceph-node1`** only. Pick the block for your OS (all three are supported):
+On **`ceph-node1`** only. Fresh deployments use **Tentacle** (`CEPH_RELEASE=tentacle`, Ceph 20.x) — the current recommended stable release — and resolve the **latest Tentacle patch** from [download.ceph.com](https://download.ceph.com/) at install time.
 
-**RHEL 9 / Rocky 9** — `dnf` + Ceph Squid repo:
+**1. Set release and resolve latest patch** (run on `ceph-node1`):
 
 ```bash
-CEPH_RELEASE=19   # Squid — match https://docs.ceph.com/en/latest/releases/
+# Recommended for fresh install — current stable major release
+CEPH_RELEASE=tentacle
 
-sudo dnf install -y centos-release-ceph-squid
+# Latest Tentacle patch (20.x.y) on the official mirror
+CEPH_VERSION=$(curl -sL https://download.ceph.com/ \
+  | grep -oE 'href="rpm-20\.[0-9]+\.[0-9]+/' \
+  | sed 's|href="rpm-||;s|/||' | sort -V | tail -1)
+
+echo "Ceph ${CEPH_VERSION} (${CEPH_RELEASE})"
+```
+
+**2. Install `cephadm`** — pick **one** path for your OS (see [node requirements](#node-requirements)).
+
+**RHEL 9 / Rocky Linux 9 or 10** — Tentacle repo + exact patch (`dnf`; Rocky 10 package install needs Ceph **≥ 20.2.2**):
+
+```bash
+sudo dnf install -y centos-release-ceph-tentacle
 sudo dnf install -y cephadm
-```
-
-**Ubuntu 22.04+** — official `cephadm` installer (no `centos-release-ceph-squid` on Ubuntu):
-
-```bash
-CEPH_RELEASE=squid   # release name for add-repo
-
-curl --silent --remote-name --location \
-  https://github.com/ceph/ceph/raw/refs/heads/main/src/cephadm/cephadm
-chmod +x cephadm
-sudo ./cephadm add-repo --release "${CEPH_RELEASE}"
-sudo ./cephadm install
-```
-
-**Any distro** — same curl installer works on RHEL, Rocky, and Ubuntu if the `dnf` path fails:
-
-```bash
-curl --silent --remote-name --location \
-  https://github.com/ceph/ceph/raw/refs/heads/main/src/cephadm/cephadm
-chmod +x cephadm
-sudo ./cephadm add-repo --release squid
-sudo ./cephadm install
-```
-
-Verify:
-
-```bash
+sudo cephadm add-repo --release "${CEPH_RELEASE}" --version "${CEPH_VERSION}"
+sudo cephadm install
 sudo cephadm version
 ```
+
+**Ubuntu 22.04 / 24.04 LTS** — bootstrap `cephadm` from the versioned RPM, then install Tentacle packages:
+
+```bash
+# el9/noarch cephadm is the bootstrap CLI on Ubuntu (Ceph daemons still run in containers)
+EL_VERSION=9
+curl --silent --remote-name --location \
+  "https://download.ceph.com/rpm-${CEPH_VERSION}/el${EL_VERSION}/noarch/cephadm"
+chmod +x cephadm
+
+# Podman must already be installed on all nodes (F.1). Do not install Docker.
+sudo ./cephadm add-repo --release "${CEPH_RELEASE}" --version "${CEPH_VERSION}"
+sudo ./cephadm install          # default: Podman — do not pass --docker
+
+sudo cephadm version
+sudo podman --version
+```
+
+**Fallback** — if `dnf` packages lag behind the mirror, use the Ubuntu/universal block above on RHEL/Rocky as well.
+
+> **Podman on Ubuntu**  
+> `cephadm` defaults to **Podman** (`--docker` is only for forcing Docker). Install Podman via `apt` and **avoid** `docker.io` / Docker CE on storage nodes.
+
+> **Other releases**  
+> For an older line (e.g. Squid 19.x), set `CEPH_RELEASE=squid` and filter `CEPH_VERSION` for `rpm-19.*` instead. Active releases: [Ceph releases](https://docs.ceph.com/en/latest/releases/).
 
 ### F.3 Bootstrap the cluster
 
@@ -292,12 +330,15 @@ sudo cephadm bootstrap \
   --public-network "${PUBLIC_NETWORK}" \
   --initial-dashboard-password 'ChangeMe123!' \
   --single-host-defaults
+# Do not pass --docker — use Podman (default on all distros when Docker is not installed)
 ```
 
 > **Lab shortcut:** `--single-host-defaults` speeds bootstrap on one node. Add hosts in F.4 before OSDs. Omit `--single-host-defaults` when all three nodes are ready.
 
 ```bash
 sudo cephadm shell -- ceph -s
+sudo cephadm shell -- ceph version    # confirm deployed version matches F.2
+sudo cephadm ls                     # container engine: podman
 ```
 
 ### F.4 Add the other two nodes with zone labels
@@ -408,6 +449,7 @@ sudo cephadm shell -- ceph mon dump | grep -oE '[0-9.]+:6789' | paste -sd,
 | Check | Expected |
 |-------|----------|
 | `ceph -s` | `HEALTH_OK` (or documented `HEALTH_WARN`) |
+| `ceph version` | Tentacle `20.x.y` — matches `CEPH_VERSION` from F.2 |
 | `osd tree` | 3 hosts in `zone-a` / `zone-b` / `zone-c` |
 | Pools | `rbd-zone-a`, `rbd-zone-b`, `rbd-zone-c` |
 | Network from worker | `nc -zv <mon-ip> 6789` succeeds |
@@ -513,12 +555,21 @@ oc -n external-ceph-csi create secret generic csi-rbd-secret \
   --from-literal=userKey="${CSI_KEY}"
 ```
 
-### 2.2 Install Ceph-CSI (pinned release)
+### 2.2 Install Ceph-CSI (latest compatible release)
 
-Pin a release that matches your Ceph major version ([compatibility matrix](https://github.com/ceph/ceph-csi#ceph-csi-features-and-available-versions)).
+Resolve the **latest Ceph-CSI tag** and confirm it supports your Ceph major version ([compatibility matrix](https://github.com/ceph/ceph-csi#ceph-csi-features-and-available-versions)).
 
 ```bash
-CEPH_CSI_VERSION=v3.12.2
+# Ceph major from the cluster (run on ceph-node1 after F.3)
+CEPH_MAJOR=$(sudo cephadm shell -- ceph version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f1)
+
+# Latest Ceph-CSI release from GitHub
+CEPH_CSI_VERSION=$(curl -sL https://api.github.com/repos/ceph/ceph-csi/releases/latest \
+  | grep -oE '"tag_name":\s*"v[^"]+"' | cut -d'"' -f4)
+
+echo "Ceph major ${CEPH_MAJOR} — Ceph-CSI ${CEPH_CSI_VERSION}"
+# If the matrix does not list this pair, pick the newest CSI version that does.
+
 NS=external-ceph-csi
 
 for manifest in \
@@ -534,7 +585,7 @@ do
 done
 ```
 
-Or use the [Helm chart](https://github.com/ceph/ceph-csi/tree/devel/charts/ceph-csi-rbd) with `namespaceOverride: external-ceph-csi`.
+Or use the [Helm chart](https://github.com/ceph/ceph-csi/tree/devel/charts/ceph-csi-rbd) with `namespaceOverride: external-ceph-csi` and a chart version matching `${CEPH_CSI_VERSION}`.
 
 ### 2.3 Cluster ConfigMap
 
@@ -754,7 +805,7 @@ Copy and tick as you go:
 |-------|----------------|
 | **CRUSH changes** | Export map before edits; watch `ceph -s` |
 | **CSI user** | Dedicated `client.csi-rbd-external` — not `client.admin` |
-| **Version pin** | Match Ceph-CSI release to Ceph major version |
+| **Version pin** | Fresh install: **Tentacle** (`CEPH_RELEASE=tentacle`), latest `20.x.y` patch from [download.ceph.com](https://download.ceph.com/). Ceph-CSI: latest GitHub tag — verify [compatibility](https://github.com/ceph/ceph-csi#ceph-csi-features-and-available-versions) with Ceph 20 |
 | **Network** | Mons + OSD public network reachable from all workers |
 | **SCC** | `privileged` for node plugin; restrict namespace RBAC |
 | **Replica 1** | OSD loss in a zone = data loss for volumes in that pool |
