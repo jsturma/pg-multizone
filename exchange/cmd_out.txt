@@ -1,11 +1,32 @@
-➜  openshift git:(main) oc get csidriver openshift-storage.rbd.csi.ceph.com
+➜  openshift git:(main) # RBD CSI driver
+oc get csidriver openshift-storage.rbd.csi.ceph.com
+
+# Current block pools and failure domain
+oc get cephblockpool -n openshift-storage
+
+# StorageCluster topology settings
+oc get storagecluster ocs-storagecluster -n openshift-storage -o yaml \
+  | grep -E 'flexibleScaling|failureDomain|cephNonResilientPools|arbiter'
+
+# Node zone labels (storage nodes matter most)
+oc get nodes -L topology.kubernetes.io/zone
+
+# Existing topology-aware SC (created by ODF when ready)
+oc get storageclass ocs-storagecluster-ceph-non-resilient-rbd 2>/dev/null || echo "not found"
 NAME                                 ATTACHREQUIRED   PODINFOONMOUNT   STORAGECAPACITY   TOKENREQUESTS   REQUIRESREPUBLISH   MODES        AGE
 openshift-storage.rbd.csi.ceph.com   true             false            false             <unset>         false               Persistent   321d
-➜  openshift git:(main) oc get storageclass ocs-storagecluster-ceph-rbd -o jsonpath='clusterID={.parameters.clusterID}{"\n"}pool={.parameters.pool}{"\n"}'
-clusterID=openshift-storage
-pool=ocs-storagecluster-cephblockpool
-➜  openshift git:(main) oc get cephblockpool -n openshift-storage
 NAME                               PHASE   TYPE         FAILUREDOMAIN   AGE
 builtin-mgr                        Ready   Replicated   host            321d
 ocs-storagecluster-cephblockpool   Ready   Replicated   host            321d
-➜  openshift git:(main)
+      {"apiVersion":"ocs.openshift.io/v1","kind":"StorageCluster","metadata":{"annotations":{},"name":"ocs-storagecluster","namespace":"openshift-storage"},"spec":{"flexibleScaling":true,"labelSelector":{"matchExpressions":[{"key":"node-role.kubernetes.io/worker","operator":"In","values":[""]}]},"manageNodes":false,"monDataDirHostPath":"/var/lib/rook","resources":{"mds":{"limits":{"cpu":"3","memory":"8Gi"},"requests":{"cpu":"1","memory":"8Gi"}},"rgw":{"limits":{"cpu":"2","memory":"4Gi"},"requests":{"cpu":"1","memory":"4Gi"}}},"storageDeviceSets":[{"count":6,"dataPVCTemplate":{"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"1"}},"storageClassName":"localblock-sc","volumeMode":"Block"}},"name":"ocs-deviceset","placement":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"node-role.kubernetes.io/worker","operator":"Exists"}]}]}},"podAntiAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":[{"podAffinityTerm":{"labelSelector":{"matchExpressions":[{"key":"app","operator":"In","values":["rook-ceph-osd"]}]},"topologyKey":"kubernetes.io/hostname"},"weight":100}]}},"portable":false,"preparePlacement":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"node-role.kubernetes.io/worker","operator":"Exists"}]}]}},"podAntiAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":[{"podAffinityTerm":{"labelSelector":{"matchExpressions":[{"key":"app","operator":"In","values":["rook-ceph-osd-prepare"]}]},"topologyKey":"kubernetes.io/hostname"},"weight":100}]}},"replica":1,"resources":{"limits":{"cpu":"2","memory":"5Gi"},"requests":{"cpu":"1","memory":"5Gi"}}}]}}
+  arbiter: {}
+  flexibleScaling: true
+    cephNonResilientPools: {}
+  failureDomain: host
+  failureDomainKey: kubernetes.io/hostname
+  failureDomainValues:
+NAME        STATUS   ROLES                         AGE    VERSION    ZONE
+ocp-node1   Ready    control-plane,master,worker   321d   v1.33.11   zone-a
+ocp-node2   Ready    control-plane,master,worker   321d   v1.33.11   zone-b
+ocp-node3   Ready    control-plane,master,worker   321d   v1.33.11   zone-c
+not found
