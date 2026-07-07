@@ -55,7 +55,7 @@ spec:
   - metadata:
       name: data
     spec:
-      accessModes: ["ReadWriteOnce"]
+      accessModes: ["WaitForFirstConsumer"]
       storageClassName: cephfs-multizone
       resources:
         requests:
