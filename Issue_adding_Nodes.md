@@ -28,7 +28,7 @@ Copy the output.
 
 ### 2. Verify the key is in root's authorized\_keys on ceph-node3
 
-On `ceph-node3`:
+On `ceph-node2|3` :
 
 ```bash
 cat /root/.ssh/authorized_keys
