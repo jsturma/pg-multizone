@@ -248,7 +248,9 @@ sudo firewall-cmd --reload
 lsblk   # confirm raw OSD device (e.g. /dev/sdb, no mount)
 ```
 
-Set hostnames and `/etc/hosts` (or use DNS):
+Set hostnames and `/etc/hosts` (or use DNS). The name registered in Ceph **must match** `hostname` on each node exactly.
+
+**Option A — short hostname (lab default):**
 
 ```bash
 sudo hostnamectl set-hostname ceph-node1   # ceph-node2, ceph-node3 on other nodes
@@ -258,6 +260,22 @@ cat <<EOF | sudo tee -a /etc/hosts
 192.168.1.12 ceph-node2
 192.168.1.13 ceph-node3
 EOF
+
+hostname   # ceph-node1 — use this string in F.3/F.4
+```
+
+**Option B — FQDN** (e.g. `ceph-node1.example.com`). Use when your environment already sets fully qualified hostnames. You **must** pass `--allow-fqdn-hostname` at bootstrap (F.3) and use the **same FQDN** in `ceph orch host add` (F.4):
+
+```bash
+sudo hostnamectl set-hostname ceph-node1.example.com   # .example.com on each node
+
+cat <<EOF | sudo tee -a /etc/hosts
+192.168.1.11 ceph-node1.example.com ceph-node1
+192.168.1.12 ceph-node2.example.com ceph-node2
+192.168.1.13 ceph-node3.example.com ceph-node3
+EOF
+
+hostname   # ceph-node1.example.com — use this exact string in F.3/F.4
 ```
 
 ### F.2 Install cephadm on the first node
@@ -280,17 +298,17 @@ echo "Ceph ${CEPH_VERSION} (${CEPH_RELEASE})"
 
 **2. Install `cephadm`** — pick **one** path for your OS (see [node requirements](#node-requirements)).
 
-**RHEL 9 / Rocky Linux 9 or 10** — Tentacle repo + exact patch (`dnf`; Rocky 10 package install needs Ceph **≥ 20.2.2**):
+**RHEL 9 / Rocky Linux 9 or 10** — Tentacle repo via release name (`dnf`; Rocky 10 package install needs Ceph **≥ 20.2.2**):
 
 ```bash
 sudo dnf install -y centos-release-ceph-tentacle
 sudo dnf install -y cephadm
-sudo cephadm add-repo --release "${CEPH_RELEASE}" --version "${CEPH_VERSION}"
+sudo cephadm add-repo --release "${CEPH_RELEASE}"
 sudo cephadm install
 sudo cephadm version
 ```
 
-**Ubuntu 22.04 / 24.04 LTS** — bootstrap `cephadm` from the versioned RPM, then install Tentacle packages:
+**Ubuntu 22.04 / 24.04 LTS** — bootstrap `cephadm` from the versioned RPM, then install the exact Tentacle patch:
 
 ```bash
 # el9/noarch cephadm is the bootstrap CLI on Ubuntu (Ceph daemons still run in containers)
@@ -300,20 +318,84 @@ curl --silent --remote-name --location \
 chmod +x cephadm
 
 # Podman must already be installed on all nodes (F.1). Do not install Docker.
-sudo ./cephadm add-repo --release "${CEPH_RELEASE}" --version "${CEPH_VERSION}"
+sudo ./cephadm add-repo --version "${CEPH_VERSION}"
 sudo ./cephadm install          # default: Podman — do not pass --docker
 
 sudo cephadm version
 sudo podman --version
 ```
 
-**Fallback** — if `dnf` packages lag behind the mirror, use the Ubuntu/universal block above on RHEL/Rocky as well.
+If `add-repo` fails fetching `release.gpg`, use [F.2b](#f2b-manual-repo-setup-when-add-repo-fails-releasegpg-vs-releaseasc) instead of `add-repo`.
+
+**Fallback** — if `dnf` packages lag behind the mirror, use the Ubuntu/universal block above on RHEL/Rocky as well. If `cephadm add-repo` fails on GPG fetch, use [F.2b](#f2b-manual-repo-setup-when-add-repo-fails-releasegpg-vs-releaseasc).
 
 > **Podman on Ubuntu**  
 > `cephadm` defaults to **Podman** (`--docker` is only for forcing Docker). Install Podman via `apt` and **avoid** `docker.io` / Docker CE on storage nodes.
 
+> **Important**  
+> `cephadm add-repo` accepts **either** `--release` **or** `--version`, not both. Use `--release tentacle` when you want the current packages from the Tentacle line, or `--version 20.x.y` when you want to pin an exact patch.
+
 > **Other releases**  
-> For an older line (e.g. Squid 19.x), set `CEPH_RELEASE=squid` and filter `CEPH_VERSION` for `rpm-19.*` instead. Active releases: [Ceph releases](https://docs.ceph.com/en/latest/releases/).
+> For an older line (e.g. Squid 19.x), set `CEPH_RELEASE=squid` and filter `CEPH_VERSION` for `rpm-19.*` instead. Then choose one mode:
+> - `add-repo --release "${CEPH_RELEASE}"` for the latest packages in that line
+> - `add-repo --version "${CEPH_VERSION}"` for one exact patch
+> 
+> Active releases: [Ceph releases](https://docs.ceph.com/en/latest/releases/).
+
+### F.2b Manual repo setup when `add-repo` fails (`release.gpg` vs `release.asc`)
+
+Some `cephadm` builds fail at `add-repo` because the script expects `release.gpg` on [download.ceph.com](https://download.ceph.com/), while the mirror only publishes `release.asc`. The error blocks the command with no override flag.
+
+**Workaround:** import the GPG key and add the repo yourself — same result as `add-repo`, then run `cephadm install` as usual.
+
+#### Debian / Ubuntu (APT)
+
+On **`ceph-node1`**, after setting `CEPH_RELEASE` / `CEPH_VERSION` in F.2:
+
+```bash
+# Import key (APT expects dearmored keyring on recent Ubuntu)
+sudo wget -q -O- 'https://download.ceph.com/keys/release.asc' \
+  | sudo gpg --dearmor -o /usr/share/keyrings/ceph-archive-keyring.gpg
+
+# Release line (e.g. tentacle) — use ONE of the two repo lines below:
+echo "deb [signed-by=/usr/share/keyrings/ceph-archive-keyring.gpg] https://download.ceph.com/debian-${CEPH_RELEASE}/ $(lsb_release -sc) main" \
+  | sudo tee /etc/apt/sources.list.d/ceph.list
+
+# Exact patch pin (e.g. 20.2.2) — alternative to the line above:
+# echo "deb [signed-by=/usr/share/keyrings/ceph-archive-keyring.gpg] https://download.ceph.com/debian-${CEPH_VERSION}/ $(lsb_release -sc) main" \
+#   | sudo tee /etc/apt/sources.list.d/ceph.list
+
+sudo apt-get update
+sudo ./cephadm install    # or: sudo cephadm install
+sudo cephadm version
+```
+
+#### RHEL / Rocky Linux (DNF/YUM)
+
+If `cephadm add-repo` fails even after `centos-release-ceph-tentacle`:
+
+```bash
+sudo rpm --import 'https://download.ceph.com/keys/release.asc'
+
+# Release line (tentacle) on EL9:
+sudo tee /etc/yum.repos.d/ceph.repo <<EOF
+[ceph]
+name=Ceph ${CEPH_RELEASE}
+baseurl=https://download.ceph.com/rpm-${CEPH_RELEASE}/el\$(rpm -E %rhel)/
+enabled=1
+gpgcheck=1
+gpgkey=https://download.ceph.com/keys/release.asc
+EOF
+
+# Exact patch pin — replace the baseurl line with:
+# baseurl=https://download.ceph.com/rpm-${CEPH_VERSION}/el\$(rpm -E %rhel)/
+
+sudo dnf clean all
+sudo cephadm install
+sudo cephadm version
+```
+
+> **Note:** `add-repo` only generates the `.list` / `.repo` file and imports the key. Manual setup skips the broken URL in the script; you do not need `add-repo` afterward.
 
 ### F.3 Bootstrap the cluster
 
@@ -321,37 +403,133 @@ On **`ceph-node1`** — replace IPs and CIDRs:
 
 ```bash
 MON_IP=192.168.1.11
-CLUSTER_NETWORK=192.168.1.0/24
-PUBLIC_NETWORK=192.168.1.0/24
+CLUSTER_NETWORK=192.168.1.0/24   # OSD replication / cluster traffic (optional if same as client network)
+PUBLIC_NETWORK=192.168.1.0/24    # client + mon access — set after bootstrap (see below)
 
+# Short hostname (Option A in F.1) — save bootstrap output (dashboard URL, FSID, credentials):
 sudo cephadm bootstrap \
   --mon-ip "${MON_IP}" \
   --cluster-network "${CLUSTER_NETWORK}" \
-  --public-network "${PUBLIC_NETWORK}" \
   --initial-dashboard-password 'ChangeMe123!' \
-  --single-host-defaults
+  --single-host-defaults 2>&1 | tee "ceph-bootstrap-$(hostname)-$(date +%F-%H%M%S).log"
+
+# FQDN hostname (Option B in F.1) — add --allow-fqdn-hostname when hostname contains a dot:
+# sudo cephadm bootstrap \
+#   --mon-ip "${MON_IP}" \
+#   --cluster-network "${CLUSTER_NETWORK}" \
+#   --allow-fqdn-hostname \
+#   --initial-dashboard-password 'ChangeMe123!' \
+#   --single-host-defaults 2>&1 | tee "ceph-bootstrap-$(hostname)-$(date +%F-%H%M%S).log"
 # Do not pass --docker — use Podman (default on all distros when Docker is not installed)
 ```
 
-> **Lab shortcut:** `--single-host-defaults` speeds bootstrap on one node. Add hosts in F.4 before OSDs. Omit `--single-host-defaults` when all three nodes are ready.
+> **Save bootstrap output**  
+> `tee` writes the log to a file **and** prints it to the terminal. The file contains the dashboard URL (`https://<host>:8443`), `admin` password reminder, and cluster FSID — keep it in a secure location.
+
+> **Default bootstrap / cephadm log locations** (on the bootstrap node):
+>
+> | Path | Contents |
+> |------|----------|
+> | `ceph-bootstrap-<hostname>-<timestamp>.log` | Your `tee` capture of the bootstrap command (current directory) |
+> | `/etc/ceph/` | Cluster access files written by bootstrap — `ceph.conf`, `ceph.client.admin.keyring`, `ceph.pub` |
+> | `/var/log/ceph/cephadm.log` | `cephadm` tool log |
+> | `/var/lib/ceph/<fsid>/` | Daemon data directories (mon, mgr, osd, …) — `<fsid>` is printed at bootstrap |
+> | `journalctl` | **Default** daemon logs (stderr → container runtime → journald) — not files under `/var/log/ceph/` unless you enable file logging |
+>
+> Optional: add `--log-to-file` to bootstrap to write traditional daemon logs under `/var/log/ceph/<fsid>/`.
+>
+> ```bash
+> # After bootstrap — cluster FSID and recent cephadm events
+> sudo cephadm shell -- ceph fsid
+> sudo cephadm shell -- ceph log last cephadm
+> journalctl -u "ceph-*" --no-pager -n 50    # distro-dependent unit names
+> ```
+
+> **FQDN hostnames**  
+> By default, `cephadm bootstrap` expects a **short** hostname (`ceph-node1`). If `hostname` returns an FQDN (`ceph-node1.example.com`), bootstrap fails unless you add **`--allow-fqdn-hostname`**. Use the same FQDN in every `ceph orch host add` command in F.4.
+
+> **`--public-network` is not a bootstrap flag**  
+> `cephadm bootstrap` supports `--cluster-network` for internal OSD traffic, but **not** `--public-network`. Set the monitor public network **after** bootstrap:
+
+```bash
+sudo cephadm shell -- ceph config set mon public_network "${PUBLIC_NETWORK}"
+```
+
+If bootstrap fails with `Failed to infer CIDR network for mon ip`, either set `PUBLIC_NETWORK` to a CIDR that matches `MON_IP`, or re-run bootstrap with `--skip-mon-network` and run the `ceph config set mon public_network ...` command above immediately after.
+
+> **Lab shortcut:** `--single-host-defaults` speeds bootstrap on one node. Add hosts in F.4 before OSDs. Omit `--single-host-defaults` when all three nodes are ready. In a single-subnet lab, `CLUSTER_NETWORK` and `PUBLIC_NETWORK` are often the same CIDR.
 
 ```bash
 sudo cephadm shell -- ceph -s
 sudo cephadm shell -- ceph version    # confirm deployed version matches F.2
+sudo cephadm shell -- ceph config get mon public_network
 sudo cephadm ls                     # container engine: podman
 ```
 
+When bootstrap succeeds, the **Ceph Dashboard** (web UI) is available on the bootstrap node:
+
+| Hostname style (F.1) | Dashboard URL |
+|----------------------|---------------|
+| Short name | `https://ceph-node1:8443` |
+| FQDN | `https://ceph-node1.example.com:8443` |
+
+Log in with user **`admin`** and the password from `--initial-dashboard-password` (example above: `ChangeMe123!`). Bootstrap also prints the URL and credentials at the end of its output — retrieve them from the `tee` log file if you closed the terminal.
+
+> Open port **8443** on the bootstrap node if you access the UI from another workstation (firewall / security group).
+
 ### F.4 Add the other two nodes with zone labels
+
+Prefer a dedicated **`cephadm`** user with **passwordless sudo** on every Ceph node instead of enabling a remote root password. This avoids `ssh-copy-id root@...` and follows Ceph's supported non-root workflow.
+
+#### F.4.1 Create the `cephadm` user on `ceph-node2` and `ceph-node3`
+
+Run on **each target node** (`ceph-node2`, `ceph-node3`) using your existing admin access method (console, cloud-init, existing SSH user, etc.):
+
+```bash
+sudo useradd -m -s /bin/bash cephadm 2>/dev/null || true
+echo 'cephadm ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/cephadm
+sudo chmod 440 /etc/sudoers.d/cephadm
+sudo mkdir -p /home/cephadm/.ssh
+sudo chmod 700 /home/cephadm/.ssh
+sudo chown -R cephadm:cephadm /home/cephadm/.ssh
+```
+
+#### F.4.2 Install Ceph's cluster SSH key for `cephadm`
 
 On **`ceph-node1`**:
 
 ```bash
-sudo ssh-copy-id -f root@ceph-node2
-sudo ssh-copy-id -f root@ceph-node3
+sudo cephadm shell -- ceph cephadm get-pub-key > ceph.pub
+```
 
+Copy that public key into `/home/cephadm/.ssh/authorized_keys` on `ceph-node2` and `ceph-node3`.
+
+Example from **`ceph-node1`** if you already have SSH access via another admin user:
+
+```bash
+cat ceph.pub | ssh admin@ceph-node2 "sudo tee /home/cephadm/.ssh/authorized_keys >/dev/null && sudo chown cephadm:cephadm /home/cephadm/.ssh/authorized_keys && sudo chmod 600 /home/cephadm/.ssh/authorized_keys"
+cat ceph.pub | ssh admin@ceph-node3 "sudo tee /home/cephadm/.ssh/authorized_keys >/dev/null && sudo chown cephadm:cephadm /home/cephadm/.ssh/authorized_keys && sudo chmod 600 /home/cephadm/.ssh/authorized_keys"
+```
+
+If you do **not** have SSH access yet, paste the content of `ceph.pub` manually by console or cloud-init.
+
+#### F.4.3 Tell Ceph to use the `cephadm` user and add hosts
+
+On **`ceph-node1`**:
+
+```bash
+sudo cephadm shell -- ceph cephadm set-user cephadm
+sudo cephadm shell -- ceph cephadm get-ssh-config
+
+# Host names must match `hostname` on each node (short name or FQDN — be consistent)
 sudo cephadm shell -- ceph orch host add ceph-node1 192.168.1.11
 sudo cephadm shell -- ceph orch host add ceph-node2 192.168.1.12
 sudo cephadm shell -- ceph orch host add ceph-node3 192.168.1.13
+
+# FQDN example (if F.1 Option B):
+# sudo cephadm shell -- ceph orch host add ceph-node1.example.com 192.168.1.11
+# sudo cephadm shell -- ceph orch host add ceph-node2.example.com 192.168.1.12
+# sudo cephadm shell -- ceph orch host add ceph-node3.example.com 192.168.1.13
 
 sudo cephadm shell -- ceph orch host label add ceph-node1 zone zone-a
 sudo cephadm shell -- ceph orch host label add ceph-node2 zone zone-b
@@ -359,6 +537,120 @@ sudo cephadm shell -- ceph orch host label add ceph-node3 zone zone-c
 
 sudo cephadm shell -- ceph orch host ls
 ```
+
+> With FQDNs, update the `ceph orch host label add` host names to match (`ceph-node1.example.com`, etc.).
+
+> **Alternative:** if your environment already allows key-based `root` SSH without a password, you can keep the default root-based flow. The `cephadm` user approach above is preferred when you do **not** want to set a root password on remote nodes.
+
+If `ceph orch host add` still fails with:
+
+```text
+Auth failed for user root
+Connection Failure: Permission denied
+Aborting connection
+```
+
+plain `ssh cephadm@ceph-node2` or `ssh cephadm@ceph-node3` may still work. In that case, `cephadm` is usually trying to use its **cluster-managed SSH key**, not your personal SSH key. Follow [F.4a](#f4a-troubleshoot-ceph-orch-host-add-ssh-auth-failures) below, then retry the `ceph orch host add` commands.
+
+### F.4a Troubleshoot `ceph orch host add` SSH auth failures
+
+This applies when manual SSH works, but:
+
+```bash
+sudo cephadm shell -- ceph orch host add ceph-node3 192.168.1.13
+```
+
+fails with authentication errors for the SSH user Ceph is trying to use (`cephadm` if you ran `set-user`, otherwise `root`).
+
+#### 1. View the Ceph-managed public key
+
+On **`ceph-node1`**:
+
+```bash
+sudo cephadm shell -- ceph cephadm get-pub-key
+```
+
+Copy the output.
+
+#### 2. Verify the key is present on the target node
+
+On **`ceph-node2`** and **`ceph-node3`**:
+
+```bash
+cat /home/cephadm/.ssh/authorized_keys
+```
+
+The public key from step 1 must be present. If it is missing:
+
+```bash
+sudo cephadm shell -- ceph cephadm get-pub-key > ceph.pub
+
+ssh admin@ceph-node3 "sudo mkdir -p /home/cephadm/.ssh && sudo chmod 700 /home/cephadm/.ssh && sudo chown -R cephadm:cephadm /home/cephadm/.ssh"
+cat ceph.pub | ssh admin@ceph-node3 "sudo tee -a /home/cephadm/.ssh/authorized_keys >/dev/null && sudo chown cephadm:cephadm /home/cephadm/.ssh/authorized_keys && sudo chmod 600 /home/cephadm/.ssh/authorized_keys"
+```
+
+Repeat for `ceph-node2` if needed. Replace `admin` with whatever bootstrap user you already have.
+
+#### 3. Test SSH with Ceph's private key
+
+Export the private key used by `cephadm`:
+
+```bash
+sudo cephadm shell -- ceph config-key get mgr/cephadm/ssh_identity_key > ceph.key
+chmod 600 ceph.key
+```
+
+Then test:
+
+```bash
+ssh -i ceph.key cephadm@192.168.1.13
+```
+
+If this fails, you have confirmed the issue is with the Ceph-managed SSH identity, not with your personal shell login.
+
+#### 4. Check SSH and sudo policy for the Ceph user
+
+On the target node:
+
+```bash
+sudo -l -U cephadm
+getent passwd cephadm
+```
+
+Expected:
+
+```text
+User cephadm may run the following commands on <host>:
+    (ALL) NOPASSWD: ALL
+```
+
+Also verify SSH directory ownership:
+
+```bash
+ls -ld /home/cephadm /home/cephadm/.ssh
+ls -l /home/cephadm/.ssh/authorized_keys
+```
+
+If you intentionally use `root` instead of `cephadm`, then also check:
+
+```bash
+grep PermitRootLogin /etc/ssh/sshd_config
+```
+
+#### 5. Inspect Ceph SSH configuration and logs
+
+```bash
+sudo cephadm shell -- ceph cephadm get-ssh-config
+sudo cephadm shell -- ceph orch host ls
+sudo cephadm shell -- ceph log last cephadm
+```
+
+Common root cause:
+
+- You can SSH manually with your personal key or bootstrap admin user.
+- `cephadm` uses the cluster key stored in `mgr/cephadm/ssh_identity_key`.
+- That key is not present in the target user's `authorized_keys` file.
+- The target user exists but does not have passwordless sudo.
 
 ### F.5 Deploy OSDs
 
@@ -820,6 +1112,10 @@ Copy and tick as you go:
 | PVC `Pending` | No pod scheduled yet | `WaitForFirstConsumer` — create a pod with zone `nodeSelector` |
 | `no available topology found` | Label mismatch | Align `topology.kubernetes.io/zone` with `allowedTopologies` |
 | CSI `CrashLoopBackOff` | SCC, secret, or mon network | Check SCC (2.4), secret key, `nc mon 6789` from worker |
+| `ceph orch host add` fails with `Auth failed for user root` | Ceph-managed SSH key missing on target node, or root SSH policy blocks it | Follow [F.4a](#f4a-troubleshoot-ceph-orch-host-add-ssh-auth-failures) and retry host add |
+| `cephadm add-repo` fails on `release.gpg` | Script expects `.gpg`; mirror serves `release.asc` only | Skip `add-repo` — [F.2b manual repo setup](#f2b-manual-repo-setup-when-add-repo-fails-releasegpg-vs-releaseasc) |
+| `cephadm bootstrap`: unknown option `--public-network` | Not a valid bootstrap flag | Remove it; set `ceph config set mon public_network <CIDR>` after bootstrap — [F.3](#f3-bootstrap-the-cluster) |
+| `cephadm bootstrap` fails on FQDN hostname | Default expects short hostname | Add `--allow-fqdn-hostname`; use the same FQDN in `ceph orch host add` — [F.1](#f1-prepare-all-three-nodes), [F.3](#f3-bootstrap-the-cluster) |
 | PVC Bound, wrong zone pool | StorageClass topology | `oc describe pvc`; provisioner logs |
 | `pool does not exist` | Pools not created | `ceph osd pool ls \| grep rbd-zone` |
 | ODF impacted | Wrong namespace | Only touch `external-ceph-csi`; never edit `openshift-storage` pools |
@@ -828,6 +1124,8 @@ Copy and tick as you go:
 oc -n external-ceph-csi logs deploy/rbd-csi-controller -c csi-provisioner --tail=100
 oc describe pvc <name> -n <namespace>
 ceph osd pool ls detail | grep rbd-zone
+sudo cephadm shell -- ceph cephadm get-pub-key
+sudo cephadm shell -- ceph log last cephadm
 ```
 
 ---
