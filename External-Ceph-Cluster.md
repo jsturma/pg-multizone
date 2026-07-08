@@ -402,20 +402,20 @@ sudo cephadm version
 On **`ceph-node1`** — replace IPs and CIDRs:
 
 ```bash
-MON_IP=192.168.1.11
+MONITOR_IP=192.168.1.11
 CLUSTER_NETWORK=192.168.1.0/24   # OSD replication / cluster traffic (optional if same as client network)
 PUBLIC_NETWORK=192.168.1.0/24    # client + mon access — set after bootstrap (see below)
 
 # Short hostname (Option A in F.1) — save bootstrap output (dashboard URL, FSID, credentials):
 sudo cephadm bootstrap \
-  --mon-ip "${MON_IP}" \
+  --mon-ip "${MONITOR_IP}" \
   --cluster-network "${CLUSTER_NETWORK}" \
   --initial-dashboard-password 'ChangeMe123!' \
   --single-host-defaults 2>&1 | tee "ceph-bootstrap-$(hostname)-$(date +%F-%H%M%S).log"
 
 # FQDN hostname (Option B in F.1) — add --allow-fqdn-hostname when hostname contains a dot:
 # sudo cephadm bootstrap \
-#   --mon-ip "${MON_IP}" \
+#   --mon-ip "${MONITOR_IP}" \
 #   --cluster-network "${CLUSTER_NETWORK}" \
 #   --allow-fqdn-hostname \
 #   --initial-dashboard-password 'ChangeMe123!' \
@@ -455,7 +455,7 @@ sudo cephadm bootstrap \
 sudo cephadm shell -- ceph config set mon public_network "${PUBLIC_NETWORK}"
 ```
 
-If bootstrap fails with `Failed to infer CIDR network for mon ip`, either set `PUBLIC_NETWORK` to a CIDR that matches `MON_IP`, or re-run bootstrap with `--skip-mon-network` and run the `ceph config set mon public_network ...` command above immediately after.
+If bootstrap fails with `Failed to infer CIDR network for mon ip`, either set `PUBLIC_NETWORK` to a CIDR that matches `MONITOR_IP`, or re-run bootstrap with `--skip-mon-network` and run the `ceph config set mon public_network ...` command above immediately after.
 
 > **Lab shortcut:** `--single-host-defaults` speeds bootstrap on one node. Add hosts in F.4 before OSDs. Omit `--single-host-defaults` when all three nodes are ready. In a single-subnet lab, `CLUSTER_NETWORK` and `PUBLIC_NETWORK` are often the same CIDR.
 
