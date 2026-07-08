@@ -521,24 +521,28 @@ On **`ceph-node1`**:
 sudo cephadm shell -- ceph cephadm set-user cephadm
 sudo cephadm shell -- ceph cephadm get-ssh-config
 
-# Host names must match `hostname` on each node (short name or FQDN — be consistent)
+# --- Option A: short hostname (F.1 Option A) ---
 sudo cephadm shell -- ceph orch host add ceph-node1 192.168.1.11
 sudo cephadm shell -- ceph orch host add ceph-node2 192.168.1.12
 sudo cephadm shell -- ceph orch host add ceph-node3 192.168.1.13
-
-# FQDN example (if F.1 Option B):
-# sudo cephadm shell -- ceph orch host add ceph-node1.example.com 192.168.1.11
-# sudo cephadm shell -- ceph orch host add ceph-node2.example.com 192.168.1.12
-# sudo cephadm shell -- ceph orch host add ceph-node3.example.com 192.168.1.13
 
 sudo cephadm shell -- ceph orch host label add ceph-node1 zone zone-a
 sudo cephadm shell -- ceph orch host label add ceph-node2 zone zone-b
 sudo cephadm shell -- ceph orch host label add ceph-node3 zone zone-c
 
+# --- Option B: FQDN (F.1 Option B) — uncomment and skip Option A above ---
+# sudo cephadm shell -- ceph orch host add ceph-node1.example.com 192.168.1.11
+# sudo cephadm shell -- ceph orch host add ceph-node2.example.com 192.168.1.12
+# sudo cephadm shell -- ceph orch host add ceph-node3.example.com 192.168.1.13
+#
+# sudo cephadm shell -- ceph orch host label add ceph-node1.example.com zone zone-a
+# sudo cephadm shell -- ceph orch host label add ceph-node2.example.com zone zone-b
+# sudo cephadm shell -- ceph orch host label add ceph-node3.example.com zone zone-c
+
 sudo cephadm shell -- ceph orch host ls
 ```
 
-> With FQDNs, update the `ceph orch host label add` host names to match (`ceph-node1.example.com`, etc.).
+> Host names in `orch host add` and `orch host label add` **must match** `hostname` on each node — use short names or FQDNs consistently, not a mix.
 
 > **Alternative:** if your environment already allows key-based `root` SSH without a password, you can keep the default root-based flow. The `cephadm` user approach above is preferred when you do **not** want to set a root password on remote nodes.
 
@@ -665,6 +669,10 @@ Expected: **one OSD per node**, each under its host bucket.
 
 ### F.6 Configure CRUSH zones
 
+Host bucket names in `ceph osd crush move` **must match** the names from F.4 (`ceph orch host ls`) — short hostname or FQDN, same as `hostname` on each node.
+
+**Option A — short hostname:**
+
 ```bash
 sudo cephadm shell -- bash -c '
 ceph osd crush add-bucket zone-a zone
@@ -676,6 +684,23 @@ ceph osd crush move zone-c root=default
 ceph osd crush move ceph-node1 zone=zone-a
 ceph osd crush move ceph-node2 zone=zone-b
 ceph osd crush move ceph-node3 zone=zone-c
+ceph osd tree
+'
+```
+
+**Option B — FQDN** (if F.1 Option B and F.4 Option B):
+
+```bash
+sudo cephadm shell -- bash -c '
+ceph osd crush add-bucket zone-a zone
+ceph osd crush add-bucket zone-b zone
+ceph osd crush add-bucket zone-c zone
+ceph osd crush move zone-a root=default
+ceph osd crush move zone-b root=default
+ceph osd crush move zone-c root=default
+ceph osd crush move ceph-node1.example.com zone=zone-a
+ceph osd crush move ceph-node2.example.com zone=zone-b
+ceph osd crush move ceph-node3.example.com zone=zone-c
 ceph osd tree
 '
 ```
