@@ -40,7 +40,7 @@ flowchart TD
 | Step | Where | What you do | Done when |
 |------|-------|-------------|-----------|
 | **F.1–F.9** or **1** | Ceph nodes | Per-zone pools `rbd-zone-a/b/c`, CSI user, mon IPs | `ceph osd pool ls` shows three pools; mon IPs noted |
-| **2** | OpenShift | Namespace, secret, Ceph-CSI, ConfigMap, SCC | `oc get csidriver rbd.csi.ceph.com`; CSI pods Running |
+| **2** | OpenShift | Namespace + PSA, secret, Ceph-CSI, ConfigMap, SCC | `oc get csidriver rbd.csi.ceph.com`; CSI pods Running |
 | **3** | OpenShift | `topology.kubernetes.io/zone` on workers | `oc get nodes -L topology.kubernetes.io/zone` |
 | **4** | OpenShift | Apply StorageClass | `oc get sc ceph-external-zone-nr` |
 | **5** | OpenShift | Test PVC + pod per zone | PVC Bound in correct zone |
@@ -707,11 +707,27 @@ ceph osd tree
 
 ### F.7 Create per-zone RBD pools
 
+CRUSH hierarchy after F.6: `default` → `zone-a/b/c` (type **zone**) → hosts (type **host**).
+
+`ceph osd crush rule create-replicated` syntax:
+
+```text
+ceph osd crush rule create-replicated <rule-name> <root-bucket> <failure-domain-type>
+```
+
+The 3rd argument must be a **bucket type** (`zone`, `host`, `osd`) — not a bucket name like `zone-a`. Using `zone-a` as the type causes:
+
+```text
+Error EINVAL: unknown type zone-a
+```
+
+Use each **zone bucket** as the rule root and `host` as the failure domain so pool `rbd-zone-a` only uses OSDs under `zone-a`:
+
 ```bash
 sudo cephadm shell -- bash -c '
 for z in zone-a zone-b zone-c; do
-  ceph osd crush rule create-replicated "replicated-${z}" default "${z}" host
-  ceph osd pool create "rbd-${z}" 32 32 replicated "replicated-${z}"
+  ceph osd crush rule create-replicated "replicated-${z}" "${z}" host
+  ceph osd pool create "rbd-${z}" 32 32 "replicated-${z}"
   ceph osd pool set "rbd-${z}" size 1
   ceph osd pool set "rbd-${z}" min_size 1
   ceph osd pool application enable "rbd-${z}" rbd
@@ -720,19 +736,34 @@ ceph osd pool ls detail | grep rbd-zone
 '
 ```
 
+> **Replica 1 warning**  
+> `size 1` and `min_size 1` mean **no redundancy** — OSD loss in a zone loses data for volumes in that pool. Acceptable for a lab; **never** use `size 1` in production.
+
 ### F.8 Create CSI Ceph user (recommended: single user)
 
-**Recommended** — one user for all pools (simpler Step 2):
+**Recommended** — one user for all pools (simpler Step 2). Multiple pools in one `osd` capability must be **comma-separated** — spaces cause `Error EINVAL`:
 
 ```bash
 sudo cephadm shell -- bash -c '
 ceph auth get-or-create client.csi-rbd-external \
   mon "profile rbd" \
-  osd "profile rbd pool=rbd-zone-a pool=rbd-zone-b pool=rbd-zone-c" \
+  osd "profile rbd pool=rbd-zone-a,profile rbd pool=rbd-zone-b,profile rbd pool=rbd-zone-c" \
   mgr "allow rw"
 ceph auth get-key client.csi-rbd-external
 '
 ```
+
+<details>
+<summary>Alternative — broader OSD profile (less restrictive)</summary>
+
+If you add zone pools often and trust this dedicated CSI user:
+
+```bash
+osd "profile rbd"
+```
+
+You lose per-pool scoping — use only on an isolated external Ceph cluster.
+</details>
 
 <details>
 <summary>Alternative — one user per zone (advanced)</summary>
@@ -821,8 +852,8 @@ ceph osd tree
 
 ```bash
 for z in zone-a zone-b zone-c; do
-  ceph osd crush rule create-replicated "replicated-${z}" default "${z}" host
-  ceph osd pool create "rbd-${z}" 32 32 replicated "replicated-${z}"
+  ceph osd crush rule create-replicated "replicated-${z}" "${z}" host
+  ceph osd pool create "rbd-${z}" 32 32 "replicated-${z}"
   ceph osd pool set "rbd-${z}" size 1
   ceph osd pool set "rbd-${z}" min_size 1
   ceph osd pool application enable "rbd-${z}" rbd
@@ -831,14 +862,16 @@ done
 ceph osd pool ls detail | grep rbd-zone
 ```
 
+> See [F.7](#f7-create-per-zone-rbd-pools) for CRUSH rule syntax — the 3rd argument must be a bucket **type** (`host`), not a bucket name (`zone-a`).
+
 ### 1.4 Create CSI Ceph user
 
-**Recommended** — single user (matches Step 2 and the bundled StorageClass):
+**Recommended** — single user (matches Step 2 and the bundled StorageClass). Use commas between pool grants — not spaces:
 
 ```bash
 ceph auth get-or-create client.csi-rbd-external \
   mon 'profile rbd' \
-  osd 'profile rbd pool=rbd-zone-a pool=rbd-zone-b pool=rbd-zone-c' \
+  osd 'profile rbd pool=rbd-zone-a,profile rbd pool=rbd-zone-b,profile rbd pool=rbd-zone-c' \
   mgr 'allow rw'
 
 ceph auth get-key client.csi-rbd-external
@@ -859,11 +892,23 @@ ceph mon dump | grep -oE '[0-9.]+:6789' | paste -sd,
 
 All commands from your workstation with `oc` and cluster-admin. Uses namespace **`external-ceph-csi`** — ODF in `openshift-storage` is unchanged.
 
-### 2.1 Create namespace and CSI secret
+### 2.1 Create namespace, Pod Security, and CSI secret
+
+OpenShift enforces **Pod Security Admission (PSA)**. CSI node plugins need `privileged` access (host paths, block devices). Label the namespace before or right after creation:
 
 ```bash
 oc create namespace external-ceph-csi
 
+oc label namespace external-ceph-csi \
+  pod-security.kubernetes.io/enforce=privileged \
+  pod-security.kubernetes.io/audit=privileged \
+  pod-security.kubernetes.io/warn=privileged \
+  --overwrite
+```
+
+> PSA `privileged` on `external-ceph-csi` is standard for CSI drivers, CNI, and similar infrastructure. Application namespaces stay on `restricted`.
+
+```bash
 # Run on Ceph admin node — paste the key when prompted, or inline:
 CSI_KEY=$(ceph auth get-key client.csi-rbd-external)
 
@@ -889,6 +934,11 @@ echo "Ceph major ${CEPH_MAJOR} — Ceph-CSI ${CEPH_CSI_VERSION}"
 
 NS=external-ceph-csi
 
+# 1. CSIDriver object (cluster-scoped — registers rbd.csi.ceph.com)
+curl -sL "https://raw.githubusercontent.com/ceph/ceph-csi/${CEPH_CSI_VERSION}/deploy/rbd/kubernetes/csidriver.yaml" \
+  | oc apply -f -
+
+# 2. RBAC + workloads (namespace from sed)
 for manifest in \
   csi-provisioner-rbac.yaml \
   csi-nodeplugin-rbac.yaml \
@@ -901,6 +951,8 @@ do
     | oc apply -f -
 done
 ```
+
+> **Do not skip `csidriver.yaml`** — without it, `oc get csidriver rbd.csi.ceph.com` returns `NotFound` and CSI sidecars crash on startup.
 
 Or use the [Helm chart](https://github.com/ceph/ceph-csi/tree/devel/charts/ceph-csi-rbd) with `namespaceOverride: external-ceph-csi` and a chart version matching `${CEPH_CSI_VERSION}`.
 
@@ -929,12 +981,24 @@ data:
 EOF
 ```
 
-### 2.4 OpenShift SCC
+### 2.4 OpenShift SCC and pod restart
+
+Grant **Security Context Constraints** to the Ceph-CSI service accounts (upstream manifest names):
 
 ```bash
-oc -n external-ceph-csi adm policy add-scc-to-user privileged \
-  -z rbd-csi-nodeplugin -z rbd-csi-provisioner
+NS=external-ceph-csi
+
+oc adm policy add-scc-to-user privileged -z rbd-csi-provisioner -n "${NS}"
+oc adm policy add-scc-to-user privileged -z rbd-csi-nodeplugin -n "${NS}"
 ```
+
+If pods were applied before PSA labels or SCC grants, delete stale pods so OpenShift recreates them with correct permissions:
+
+```bash
+oc delete pods -n external-ceph-csi --all
+```
+
+> CSI drivers must run privileged to mount host devices and `/var/lib/kubelet` paths. Restricting SCC to the `external-ceph-csi` namespace keeps other namespaces on the default `restricted` profile.
 
 ### 2.5 Verify driver
 
@@ -1104,8 +1168,8 @@ Copy and tick as you go:
 [ ] Ceph: rbd-zone-a, rbd-zone-b, rbd-zone-c exist (size 1)
 [ ] Ceph: client.csi-rbd-external created; key saved
 [ ] Ceph: monitor IP list saved
-[ ] OpenShift: external-ceph-csi namespace + csi-rbd-secret
-[ ] OpenShift: Ceph-CSI pods Running; csidriver rbd.csi.ceph.com
+[ ] OpenShift: external-ceph-csi namespace (PSA privileged) + csi-rbd-secret
+[ ] OpenShift: csidriver.yaml applied; Ceph-CSI pods Running; SCC granted
 [ ] OpenShift: ceph-csi-config ConfigMap with correct mons
 [ ] OpenShift: nodes labelled topology.kubernetes.io/zone
 [ ] OpenShift: ceph-external-zone-nr StorageClass applied
@@ -1136,7 +1200,11 @@ Copy and tick as you go:
 |---------|--------------|-----|
 | PVC `Pending` | No pod scheduled yet | `WaitForFirstConsumer` — create a pod with zone `nodeSelector` |
 | `no available topology found` | Label mismatch | Align `topology.kubernetes.io/zone` with `allowedTopologies` |
-| CSI `CrashLoopBackOff` | SCC, secret, or mon network | Check SCC (2.4), secret key, `nc mon 6789` from worker |
+| `Error EINVAL: unknown type zone-a` | Zone bucket name used as CRUSH type in `create-replicated` | Use `"${z}" host` — zone bucket as **root**, `host` as type — [F.7](#f7-create-per-zone-rbd-pools) |
+| `Error EINVAL` on `ceph auth get-or-create` | Space-separated pools in `osd` caps | Use comma-separated `profile rbd pool=...` — [F.8](#f8-create-csi-ceph-user-recommended-single-user) |
+| `csidriver rbd.csi.ceph.com` NotFound | `csidriver.yaml` not applied | Apply [Step 2.2](#22-install-ceph-csi-latest-compatible-release) `csidriver.yaml` |
+| PSA `restricted:latest` warnings / CSI CrashLoop | Namespace not privileged | PSA labels + SCC — [Step 2.1](#21-create-namespace-pod-security-and-csi-secret), [2.4](#24-openshift-scc-and-pod-restart) |
+| CSI `CrashLoopBackOff` | SCC, secret, mon network, or missing CSIDriver | Check 2.1–2.4; `oc describe pod -n external-ceph-csi`; `nc mon 6789` from worker |
 | `ceph orch host add` fails with `Auth failed for user root` | Ceph-managed SSH key missing on target node, or root SSH policy blocks it | Follow [F.4a](#f4a-troubleshoot-ceph-orch-host-add-ssh-auth-failures) and retry host add |
 | `cephadm add-repo` fails on `release.gpg` | Script expects `.gpg`; mirror serves `release.asc` only | Skip `add-repo` — [F.2b manual repo setup](#f2b-manual-repo-setup-when-add-repo-fails-releasegpg-vs-releaseasc) |
 | `cephadm bootstrap`: unknown option `--public-network` | Not a valid bootstrap flag | Remove it; set `ceph config set mon public_network <CIDR>` after bootstrap — [F.3](#f3-bootstrap-the-cluster) |
