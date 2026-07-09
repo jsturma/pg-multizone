@@ -69,13 +69,42 @@ Fill this in as you work; you need every row before Step 2.
 | Value | Example | Where to get it |
 |-------|---------|-----------------|
 | Monitor IPs (`:6789`) | `192.168.1.11:6789,192.168.1.12:6789,192.168.1.13:6789` | F.8 or Step 1.5 — `ceph mon dump` |
-| Zone names | `zone-a`, `zone-b`, `zone-c` | Must match OpenShift node labels **and** CRUSH buckets |
-| Pool names | `rbd-zone-a`, `rbd-zone-b`, `rbd-zone-c` | F.7 or Step 1.3 |
+| Zone names | `zone-a`, `zone-b`, `zone-c` | [`topology/zones.env`](runbooks/openshift/topology/zones.env) — must match CRUSH buckets, pools, node labels, and manifests |
+| Pool names | `rbd-zone-a`, `rbd-zone-b`, `rbd-zone-c` | `rbd_pool_for_zone()` in `zones.env`; F.7 or Step 1.3 |
 | CSI Ceph user | `client.csi-rbd-external` | F.8-alt or Step 1.4 |
 | CSI user key | `(secret)` | `ceph auth get-key client.csi-rbd-external` |
 | `clusterID` in ConfigMap | `ceph-external` | Fixed in this guide — keep consistent with StorageClass |
+| K8s zone label key | `topology.kubernetes.io/zone` | `K8S_ZONE_LABEL` in [`topology/zones.env`](runbooks/openshift/topology/zones.env) |
 | StorageClass name | `ceph-external-zone-nr` | [`manifests/storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml) |
 | Ceph version | `20.2.x` Tentacle (example) | F.2 — latest Tentacle patch from [download.ceph.com](https://download.ceph.com/); confirm with `ceph version` after bootstrap |
+
+### Topology alignment (Ceph ↔ Kubernetes)
+
+All zone identifiers must use the **same strings** everywhere. Defaults live in [`runbooks/openshift/topology/zones.env`](runbooks/openshift/topology/zones.env).
+
+| Layer | Field | Example values | Must match |
+|-------|-------|----------------|------------|
+| Ceph CRUSH bucket | name | `zone-a`, `zone-b`, `zone-c` | `ZONES` in `zones.env` |
+| Ceph CRUSH bucket | type | `zone` | `move … zone=zone-a` parent type |
+| Ceph RBD pool | name | `rbd-zone-a`, … | `rbd_pool_for_zone(zone-a)` |
+| Ceph CRUSH rule | name | `replicated-zone-a`, … | `crush_rule_for_zone(zone-a)` |
+| Ceph orch host label | `zone=<value>` | `zone-a`, … | Same as K8s zone label **value** |
+| OpenShift node | `topology.kubernetes.io/zone` | `zone-a`, … | `K8S_ZONE_LABEL` + `ZONES` |
+| StorageClass | `topologyConstrainedPools` | `rbd-zone-a` ↔ `zone-a` | [`storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml) |
+| StorageClass | `allowedTopologies` | `zone-a`, `zone-b`, `zone-c` | Same as node labels |
+| StatefulSet | `nodeAffinity` zone values | `zone-a`, … | [`statefulset-external-rbd-nr.yaml`](runbooks/openshift/manifests/statefulset-external-rbd-nr.yaml) |
+
+If your cloud provider already uses different zone names (e.g. `us-east-1a`), **change `ZONES` in `zones.env` first**, then recreate Ceph CRUSH buckets/pools and update every manifest row in the table above.
+
+Verify before provisioning PVCs:
+
+```bash
+# On Ceph admin node (after F.6 / Step 1.2–1.3)
+bash runbooks/openshift/topology/verify-ceph-topology.sh
+
+# On OpenShift (after Step 3–4)
+cd runbooks/openshift && ./topology/verify-alignment.sh
+```
 
 ---
 
@@ -544,6 +573,8 @@ sudo cephadm shell -- ceph orch host ls
 
 > Host names in `orch host add` and `orch host label add` **must match** `hostname` on each node — use short names or FQDNs consistently, not a mix.
 
+> Orch label **values** (`zone-a`, `zone-b`, `zone-c`) must match OpenShift `topology.kubernetes.io/zone` and CRUSH bucket names — see [`topology/zones.env`](runbooks/openshift/topology/zones.env).
+
 > **Alternative:** if your environment already allows key-based `root` SSH without a password, you can keep the default root-based flow. The `cephadm` user approach above is preferred when you do **not** want to set a root password on remote nodes.
 
 If `ceph orch host add` still fails with:
@@ -803,6 +834,9 @@ sudo cephadm shell -- ceph -s
 sudo cephadm shell -- ceph osd tree
 sudo cephadm shell -- ceph df
 
+# Confirm CRUSH buckets and pools match zones.env (copy script to admin node or clone repo)
+bash runbooks/openshift/topology/verify-ceph-topology.sh
+
 # Save monitor endpoints for Step 2.3
 sudo cephadm shell -- ceph mon dump | grep -oE '[0-9.]+:6789' | paste -sd,
 ```
@@ -877,7 +911,12 @@ done
 ceph osd pool ls detail | grep rbd-zone
 ```
 
-> See [F.7](#f7-create-per-zone-rbd-pools) for CRUSH rule syntax — the 3rd argument must be a bucket **type** (`host`), not a bucket name (`zone-a`).
+```bash
+# From repo checkout on Ceph admin node
+bash runbooks/openshift/topology/verify-ceph-topology.sh
+```
+
+> Zone and pool names must match [`topology/zones.env`](runbooks/openshift/topology/zones.env). See [F.7](#f7-create-per-zone-rbd-pools) for CRUSH rule syntax — the 3rd argument must be a bucket **type** (`host`), not a bucket name (`zone-a`).
 
 ### 1.4 Create CSI Ceph user
 
@@ -1034,14 +1073,15 @@ If pods stay `CrashLoopBackOff`, see [Troubleshooting](#troubleshooting).
 
 ## Step 3 — Label OpenShift nodes
 
-Zone labels **must match** CRUSH bucket names and `topologyConstrainedPools` (`zone-a`, `zone-b`, `zone-c`).
+Zone labels **must match** CRUSH bucket names and `topologyConstrainedPools`. Defaults are in [`topology/zones.env`](runbooks/openshift/topology/zones.env).
 
 ```bash
 cd runbooks/openshift
 ./02-label-nodes.sh
+./topology/verify-alignment.sh
 ```
 
-Or manually:
+Or manually (values from `zones.env`):
 
 ```bash
 oc label node ocp-node1 topology.kubernetes.io/zone=zone-a --overwrite
@@ -1051,7 +1091,7 @@ oc label node ocp-node3 topology.kubernetes.io/zone=zone-c --overwrite
 oc get nodes -L topology.kubernetes.io/zone
 ```
 
-> If your cloud provider already sets `topology.kubernetes.io/zone`, **rename or align** Ceph CRUSH zones to those values instead of forcing `zone-a/b/c`.
+> If your cloud provider already sets `topology.kubernetes.io/zone`, edit `ZONES` in [`topology/zones.env`](runbooks/openshift/topology/zones.env) and **align Ceph CRUSH buckets/pools** to those values — do not mix cloud zone names with different Ceph bucket names.
 
 ---
 
@@ -1062,6 +1102,8 @@ Apply the manifest from this repo (edit monitor-related values in Step 2.3 only 
 ```bash
 oc apply -f runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml
 oc get storageclass ceph-external-zone-nr
+
+cd runbooks/openshift && ./topology/verify-alignment.sh
 ```
 
 Key parameters:
@@ -1161,6 +1203,7 @@ APPLY_ROUTE=true oc apply -f manifests/route.yaml
 
 ```bash
 cd runbooks/openshift
+./topology/verify-alignment.sh
 ./04-verify.sh
 ./05-test-connection.sh
 ```
@@ -1181,13 +1224,15 @@ Copy and tick as you go:
 ```
 [ ] Pre-flight: workers reach Ceph mons on 6789
 [ ] Ceph: rbd-zone-a, rbd-zone-b, rbd-zone-c exist (size 1)
+[ ] Ceph: ./topology/verify-ceph-topology.sh passes (CRUSH buckets + rbd-zone-* pools)
 [ ] Ceph: client.csi-rbd-external created; key saved
 [ ] Ceph: monitor IP list saved
 [ ] OpenShift: external-ceph-csi namespace (PSA privileged) + csi-rbd-secret
 [ ] OpenShift: csidriver.yaml applied; Ceph-CSI pods Running; SCC granted
 [ ] OpenShift: ceph-csi-config ConfigMap with correct mons
-[ ] OpenShift: nodes labelled topology.kubernetes.io/zone
+[ ] OpenShift: nodes labelled topology.kubernetes.io/zone (zones.env)
 [ ] OpenShift: ceph-external-zone-nr StorageClass applied
+[ ] OpenShift: ./topology/verify-alignment.sh passes
 [ ] Test: PVC Bound in zone-a (then b, c)
 [ ] PostgreSQL: 3 pods Running in pg-multizone
 [ ] ./04-verify.sh and ./05-test-connection.sh pass
@@ -1214,7 +1259,7 @@ Copy and tick as you go:
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | PVC `Pending` | No pod scheduled yet | `WaitForFirstConsumer` — create a pod with zone `nodeSelector` |
-| `no available topology found` | Label mismatch | Align `topology.kubernetes.io/zone` with `allowedTopologies` |
+| `no available topology found` | Label mismatch | Run `./topology/verify-alignment.sh`; align `topology.kubernetes.io/zone` with `allowedTopologies` and Ceph CRUSH buckets |
 | `Error EINVAL: unknown type zone-a` | Zone bucket name used as CRUSH type in `create-replicated` | Use `"${z}" host` — zone bucket as **root**, `host` as type — [F.7](#f7-create-per-zone-rbd-pools) |
 | `Error EINVAL` on `ceph auth get-or-create` | Space-separated pools in `osd` caps | Use comma-separated `profile rbd pool=...` — [F.8](#f8-create-csi-ceph-user-recommended-single-user) |
 | `csidriver rbd.csi.ceph.com` NotFound | `csidriver.yaml` not applied | Apply [Step 2.2](#22-install-ceph-csi-latest-compatible-release) `csidriver.yaml` |

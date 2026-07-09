@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=topology/zones.env
+source "${SCRIPT_DIR}/topology/zones.env"
+
 mapfile -t NODES < <(
   oc get nodes -l node-role.kubernetes.io/worker= --no-headers 2>/dev/null \
     | awk '$2 ~ /^Ready/ {print $1}' \
@@ -17,12 +21,10 @@ fi
 
 echo "📋  Found ${#NODES[@]} node(s): ${NODES[*]}"
 
-ZONES=(zone-a zone-b zone-c)
-
 label_node() {
   local node=$1
   local zone=$2
-  oc label node "$node" topology.kubernetes.io/zone="$zone" --overwrite
+  oc label node "$node" "${K8S_ZONE_LABEL}=${zone}" --overwrite
   echo "🔖  $node → $zone"
 }
 
@@ -32,4 +34,4 @@ for node in "${NODES[@]}"; do
   ((i++)) || true
 done
 
-oc get nodes -L topology.kubernetes.io/zone
+oc get nodes -L "${K8S_ZONE_LABEL}"

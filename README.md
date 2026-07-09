@@ -194,9 +194,12 @@ Prerequisites: Ceph pools `rbd-zone-a/b/c`, Ceph-CSI in `external-ceph-csi`, nod
 
 ## Label nodes (zone-a, zone-b, zone-c)
 
+Canonical zone names: [`topology/zones.env`](runbooks/openshift/topology/zones.env) (must match Ceph CRUSH buckets and StorageClass `topologyConstrainedPools`).
+
 ```bash
 cd runbooks/openshift
 ./02-label-nodes.sh
+./topology/verify-alignment.sh
 ```
 
 Ready worker nodes are discovered automatically and assigned round-robin to `zone-a`, `zone-b`, and `zone-c`.
@@ -321,7 +324,11 @@ pg-multizone/
     ├── ZONE-LOCAL-RBD.md
     ├── 01-verify-csi.sh
     ├── 01-verify-csi-rbd.sh
-    ├── 02-label-nodes.sh
+    ├── 02-label-nodes.sh            # sources topology/zones.env
+    ├── topology/
+    │   ├── zones.env                # canonical zone-a/b/c ↔ rbd-zone-* mapping
+    │   ├── verify-alignment.sh      # OpenShift labels + manifests
+    │   └── verify-ceph-topology.sh  # Ceph CRUSH + pools (admin node)
     ├── 03-deploy-postgres.sh      # Options A–C only
     ├── 04-verify.sh
     ├── 05-test-connection.sh

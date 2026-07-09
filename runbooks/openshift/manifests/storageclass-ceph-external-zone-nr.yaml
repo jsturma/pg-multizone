@@ -1,4 +1,5 @@
 # Zone-local RBD via external Ceph + rbd.csi.ceph.com
+# Zone ↔ pool mapping must match topology/zones.env and Ceph CRUSH buckets (zone-a/b/c → rbd-zone-a/b/c).
 # Prerequisites: external-ceph-csi namespace, CSI driver, per-zone pools rbd-zone-{a,b,c}
 # See External-Ceph-Cluster.md
 apiVersion: storage.k8s.io/v1
