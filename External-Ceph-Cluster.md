@@ -77,6 +77,7 @@ Fill this in as you work; you need every row before Step 2.
 | K8s zone label key | `topology.kubernetes.io/zone` | `K8S_ZONE_LABEL` in [`topology/zones.env`](runbooks/openshift/topology/zones.env) |
 | StorageClass name | `ceph-external-zone-nr` | [`manifests/storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml) |
 | Ceph version | `20.2.x` Tentacle (example) | F.2 — latest Tentacle patch from [download.ceph.com](https://download.ceph.com/); confirm with `ceph version` after bootstrap |
+| Ceph major (for Ceph-CSI) | `20` | `CEPH_MAJOR` in [Step 2.2](#22-install-ceph-csi-latest-compatible-release) — from `ceph version` on admin node, or set manually |
 
 ### Topology alignment (Ceph ↔ Kubernetes)
 
@@ -944,9 +945,21 @@ ceph mon dump | grep -oE '[0-9.]+:6789' | paste -sd,
 
 ## Step 2 — Deploy Ceph-CSI (separate from ODF)
 
-All commands from your workstation with `oc` and cluster-admin. Uses namespace **`external-ceph-csi`** — ODF in `openshift-storage` is unchanged.
+Uses namespace **`external-ceph-csi`** — ODF in `openshift-storage` is unchanged.
+
+| Substep | Run on | Needs |
+|---------|--------|--------|
+| 2.1 — CSI secret key | **Ceph admin node** | `ceph` CLI or `cephadm shell` with cluster access |
+| 2.1 — namespace, secret, PSA | **OpenShift workstation** | `oc` cluster-admin |
+| 2.2 — `CEPH_MAJOR` | **Ceph admin node** | `cephadm` deployed (fresh install) or `ceph` + keyring (existing cluster) |
+| 2.2 — apply Ceph-CSI manifests | **OpenShift workstation** | `oc`, `curl` |
+| 2.3–2.5 | **OpenShift workstation** | `oc` |
+
+> **Not on a Ceph node?** SSH to a monitor/admin host first for 2.1 (key) and 2.2 (`CEPH_MAJOR`). You cannot run `cephadm shell` or `ceph auth get-key` from a host that has no Ceph client config and no route to the cluster. Alternatively, set `CEPH_MAJOR` manually from [F.9](#f9-verify-cluster-health) / Step 1.5 output (Tentacle = `20`).
 
 ### 2.1 Create namespace, Pod Security, and CSI secret
+
+**On OpenShift workstation** — PSA and namespace:
 
 OpenShift enforces **Pod Security Admission (PSA)**. CSI node plugins need `privileged` access (host paths, block devices). Label the namespace before or right after creation:
 
@@ -962,9 +975,21 @@ oc label namespace external-ceph-csi \
 
 > PSA `privileged` on `external-ceph-csi` is standard for CSI drivers, CNI, and similar infrastructure. Application namespaces stay on `restricted`.
 
+**On Ceph admin node** — fetch the CSI user key (requires cluster access; `cephadm shell` only works where `cephadm` is installed, typically the bootstrap host):
+
 ```bash
-# Run on Ceph admin node — paste the key when prompted, or inline:
+ceph auth get-key client.csi-rbd-external
+# cephadm-managed cluster:
+# sudo cephadm shell -- ceph auth get-key client.csi-rbd-external
+```
+
+**On OpenShift workstation** — create the secret (paste the key, or export it from the admin node):
+
+```bash
+# If you still have shell on the Ceph admin node with cluster access:
 CSI_KEY=$(ceph auth get-key client.csi-rbd-external)
+
+# Or paste manually: CSI_KEY='<key from ceph auth get-key>'
 
 oc -n external-ceph-csi create secret generic csi-rbd-secret \
   --from-literal=userID=csi-rbd-external \
@@ -975,9 +1000,26 @@ oc -n external-ceph-csi create secret generic csi-rbd-secret \
 
 Resolve the **latest Ceph-CSI tag** and confirm it supports your Ceph major version ([compatibility matrix](https://github.com/ceph/ceph-csi#ceph-csi-features-and-available-versions)).
 
+**On Ceph admin node** — read the cluster major version (needs `cephadm` on fresh installs, or plain `ceph` with a valid `ceph.conf`/keyring on existing clusters):
+
 ```bash
-# Ceph major from the cluster (run on ceph-node1 after F.3)
-CEPH_MAJOR=$(sudo cephadm shell -- ceph version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f1)
+# cephadm-managed cluster (F.1–F.9) — run on bootstrap / admin node only
+CEPH_MAJOR=$(sudo cephadm shell -- ceph version 2>/dev/null \
+  | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f1)
+
+# Existing cluster without cephadm on this host — if ceph CLI already works:
+# CEPH_MAJOR=$(ceph version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f1)
+
+echo "Ceph major: ${CEPH_MAJOR}"
+```
+
+If you only have an OpenShift workstation, set `CEPH_MAJOR` manually from the version you recorded in F.9 or Step 1.5 (e.g. Tentacle `ceph version` → `ceph version 20.2.0 …` → `CEPH_MAJOR=20`).
+
+**On OpenShift workstation** — resolve Ceph-CSI release and apply manifests:
+
+```bash
+# Set if not exported from the Ceph admin shell (Tentacle example):
+CEPH_MAJOR="${CEPH_MAJOR:-20}"
 
 # Latest Ceph-CSI release from GitHub
 CEPH_CSI_VERSION=$(curl -sL https://api.github.com/repos/ceph/ceph-csi/releases/latest \
