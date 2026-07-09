@@ -76,3 +76,33 @@ If you plan on adding more zone pools in the future and don't want to keep updat
 osd "profile rbd"
 
 ```
+
+Issue 3
+
+The `oc apply` command successfully created your RBAC, Service Accounts, Deployment, and DaemonSet, but it threw several prominent **`Warning: would violate PodSecurity "restricted:latest"`** alerts.
+
+Because you are using OpenShift (`oc`), namespaces have strict **Pod Security Admission (PSA)** profiles enabled by default. The `restricted` profile completely blocks pods that require host access, root privileges, or specific Linux capabilities.
+
+However, by their very nature, **Storage CSI drivers must run with high privileges**. They need to mount hardware devices, access host paths (`hostPath`), run as `privileged`, and use the host network to talk to the Ceph cluster.
+
+---
+
+### The Fix
+
+You need to explicitly tell OpenShift that the `external-ceph-csi` namespace is allowed to run highly privileged infrastructure pods. You do this by applying the `privileged` Pod Security profile to the namespace.
+
+Run the following commands to add the required labels:
+
+```bash
+# Set the PSA enforcement to privileged
+oc label ns external-ceph-csi pod-security.kubernetes.io/enforce=privileged --overwrite
+
+# Set the audit and warn levels to privileged to clear future warning logs
+oc label ns external-ceph-csi pod-security.kubernetes.io/audit=privileged --overwrite
+oc label ns external-ceph-csi pod-security.kubernetes.io/warn=privileged --overwrite
+
+```
+
+### 💡 Why this is safe
+
+While turning off "restricted" mode sounds scary, it is standard practice and **mandatory** for infrastructure-level workloads like CSI storage plugins, CNIs (networking), and log collectors. Since these pods are restricted to your dedicated `external-ceph-csi` namespace, your normal application namespaces remain completely secure under the `restricted` profile.
