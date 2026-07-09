@@ -669,6 +669,19 @@ Expected: **one OSD per node**, each under its host bucket.
 
 ### F.6 Configure CRUSH zones
 
+`add-bucket` takes two arguments — **name** and **type** — not a redundant extra word:
+
+```text
+ceph osd crush add-bucket <name> <type>
+```
+
+| Command | First arg | Second arg |
+|---------|-----------|------------|
+| `add-bucket zone-a zone` | Bucket **name** (`zone-a`) — any unique label you choose | Bucket **type** (`zone`) — a CRUSH hierarchy level, like `host`, `rack`, or `root` |
+| `move ceph-node1 zone=zone-a` | Host bucket to move | Parent link: `zone` = parent **type**, `zone-a` = parent **name** |
+
+The type `zone` is **not** ignored. Ceph uses it when you later run `move … zone=zone-a` and when CRUSH rules reference failure domains of type `zone`. You could name the bucket `east` instead of `zone-a` and still use type `zone`; we use `zone-a` only as a readable name.
+
 Host bucket names in `ceph osd crush move` **must match** the names from F.4 (`ceph orch host ls`) — short hostname or FQDN, same as `hostname` on each node.
 
 **Option A — short hostname:**
@@ -827,6 +840,8 @@ ceph osd crush rule ls
 ```
 
 ### 1.2 Create zone buckets and place hosts
+
+`add-bucket` syntax is `ceph osd crush add-bucket <name> <type>`. In `add-bucket zone-a zone`, the first `zone-a` is the bucket **name**; the second `zone` is the bucket **type** (a CRUSH level like `host` or `root`) — it is required, not ignored. The same type appears in `move ocp-node1 zone=zone-a` (`zone` = parent type, `zone-a` = parent name). See [F.6](#f6-configure-crush-zones) for a full breakdown.
 
 Replace host names with yours (`ocp-node1` → `zone-a`, etc.):
 
