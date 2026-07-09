@@ -103,6 +103,73 @@ oc label ns external-ceph-csi pod-security.kubernetes.io/warn=privileged --overw
 
 ```
 
+Issue 3
+
+Ah, that explains exactly why this is breaking. You applied raw, upstream Kubernetes manifests directly into OpenShift using a basic namespace `sed` replacement.
+
+While that works perfectly fine on standard Kubernetes, **OpenShift is much stricter out-of-the-box**, and those manifests are missing a few critical things required by both the cluster and the driver itself.
+
+Here are the three reasons your pods are crashlooping based on those exact manifests:
+
+---
+
+## 1. Missing `CSIDriver` Object
+
+In your loop, you deployed the RBAC and the workloads, but you didn't deploy the actual `CSIDriver` custom resource. The CSI sidecar containers (like `csi-provisioner`) will look for this object on startup, fail to find it, and immediately crash.
+
+This is why your earlier command `oc get csidriver rbd.csi.ceph.com` returned `NotFound`.
+
+## 2. OpenShift Permissions (SCCs)
+
+OpenShift utilizes **Security Context Constraints (SCCs)**. The node plugin (`csi-rbdplugin.yaml`) runs as a DaemonSet that needs to mount host paths (like `/var/lib/kubelet`) and run as a privileged container to attach block devices.
+
+By default, OpenShift blocks standard ServiceAccounts from doing this, causing the containers to crash instantly.
+
+## 3. RBAC Scope
+
+The upstream RBAC files create `ClusterRoleBindings`. Your `sed` command replaced the namespace inside the rules, but OpenShift often requires explicit permissions granted to the `system:openshift-scc` group for CSI drivers.
+
+---
+
+## How to Fix It
+
+### Step 1: Deploy the Missing CSI Driver Object
+
+You need to apply the `csidriver.yaml` from the upstream repository so OpenShift knows the driver exists:
+
+```bash
+curl -sL "https://raw.githubusercontent.com/ceph/ceph-csi/${CEPH_CSI_VERSION}/deploy/rbd/kubernetes/csidriver.yaml" | oc apply -f -
+
+```
+
+*Note: This will register `rbd.csi.ceph.com` globally, which avoids a naming conflict with the pre-existing `openshift-storage.rbd.csi.ceph.com`.*
+
+### Step 2: Grant Security Context Constraints (SCC)
+
+You must grant the `privileged` SCC to the Ceph CSI service accounts so they are allowed to interact with the underlying Red Hat Enterprise Linux CoreOS (RHCOS) nodes.
+
+Run these commands in your terminal:
+
+```bash
+# Grant privileged access to the provisioner service account
+oc adm policy add-scc-to-user privileged -z ceph-csi-provisioner-sa -n ${NS}
+
+# Grant privileged access to the nodeplugin service account
+oc adm policy add-scc-to-user privileged -z ceph-csi-nodeplugin-sa -n ${NS}
+
+```
+
+### Step 3: Clear the Stale ReplicaSets
+
+Because you have multiple old versions fighting each other from your previous attempts, delete the current deployment pods so OpenShift can recreate them cleanly with the new permissions:
+
+```bash
+oc delete pods -n ${NS} --all
+
+```
+
+Once the new pods spin up with the correct SCC permissions and find the registered `CSIDriver` object, they should transition to `Running` and `7/7` ready.
+
 ### 💡 Why this is safe
 
 While turning off "restricted" mode sounds scary, it is standard practice and **mandatory** for infrastructure-level workloads like CSI storage plugins, CNIs (networking), and log collectors. Since these pods are restricted to your dedicated `external-ceph-csi` namespace, your normal application namespaces remain completely secure under the `restricted` profile.
