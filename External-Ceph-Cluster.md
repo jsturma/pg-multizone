@@ -1137,22 +1137,43 @@ for manifest in \
   csi-rbdplugin-provisioner.yaml \
   csi-rbdplugin.yaml
 do
-  curl -sL "https://raw.githubusercontent.com/ceph/ceph-csi/${CEPH_CSI_VERSION}/deploy/rbd/kubernetes/${manifest}" \
+  body=$(curl -sL "https://raw.githubusercontent.com/ceph/ceph-csi/${CEPH_CSI_VERSION}/deploy/rbd/kubernetes/${manifest}" \
     | sed -e "s/namespace: default/namespace: ${NS}/g" \
-          -e "s/namespace: cephcsi/namespace: ${NS}/g" \
-    | oc apply -f -
+          -e "s/namespace: cephcsi/namespace: ${NS}/g")
+  # Node plugin must advertise topology.kubernetes.io/zone (StorageClass + node labels).
+  # Without --domainlabels, Ceph-CSI defaults to topology.rbd.csi.ceph.com/zone and PVCs fail.
+  if [[ "${manifest}" == "csi-rbdplugin.yaml" ]]; then
+    body=$(printf '%s\n' "${body}" \
+      | sed '/--drivername=rbd.csi.ceph.com/a\
+            - "--domainlabels=topology.kubernetes.io/zone"')
+  fi
+  printf '%s\n' "${body}" | oc apply -f -
 done
+
+# Already deployed without --domainlabels? Patch the DaemonSet and roll node pods:
+# oc -n external-ceph-csi patch daemonset csi-rbdplugin --type=json -p='[
+#   {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--domainlabels=topology.kubernetes.io/zone"}
+# ]'
+# oc -n external-ceph-csi rollout status daemonset/csi-rbdplugin
 ```
 
 > **Do not skip `csidriver.yaml`** — without it, `oc get csidriver rbd.csi.ceph.com` returns `NotFound` and CSI sidecars crash on startup.
 
-Or use the [Helm chart](https://github.com/ceph/ceph-csi/tree/devel/charts/ceph-csi-rbd) with `namespaceOverride: external-ceph-csi` and a chart version matching `${CEPH_CSI_VERSION}`.
+Or use the [Helm chart](https://github.com/ceph/ceph-csi/tree/devel/charts/ceph-csi-rbd) with `namespaceOverride: external-ceph-csi`, a chart version matching `${CEPH_CSI_VERSION}`, and:
+
+```yaml
+topology:
+  domainLabels:
+    - topology.kubernetes.io/zone
+```
 
 ### 2.3 Cluster ConfigMap
 
 Replace monitor IPs with your values from F.9 or Step 1.5. **`clusterID` must match** the StorageClass parameter `ceph-external`.
 
-> **Zones do not belong in this ConfigMap.** `ceph-csi-config` only tells Ceph-CSI how to reach the cluster (`clusterID` + `monitors`). Zone → pool mapping is in the **StorageClass** (`topologyConstrainedPools`, Step 4) and **node labels** (`topology.kubernetes.io/zone`, Step 3). Do not add `domainLabels`, `topology`, or zone names to `config.json`.
+> **Zones do not belong in this ConfigMap.** `ceph-csi-config` only tells Ceph-CSI how to reach the cluster (`clusterID` + `monitors`). Zone → pool mapping is in the **StorageClass** (`topologyConstrainedPools`, Step 4) and **node labels** (`topology.kubernetes.io/zone`, Step 3). Do not add zone names or `topologyConstrainedPools` to `config.json`.
+>
+> **Topology domain key** is configured on the **node plugin** (`--domainlabels=topology.kubernetes.io/zone` in Step 2.2, or Helm `topology.domainLabels`). That makes the CSI driver advertise the same key as `allowedTopologies` / `domainSegments` in the StorageClass — not via this ConfigMap.
 
 ```bash
 cat <<'EOF' | oc -n external-ceph-csi apply -f -
@@ -1400,6 +1421,7 @@ Copy and tick as you go:
 |---------|--------------|-----|
 | PVC `Pending` | No pod scheduled yet | `WaitForFirstConsumer` — create a pod with zone `nodeSelector` |
 | `no available topology found` | Label mismatch | Run `./topology/verify-alignment.sh`; align `topology.kubernetes.io/zone` with `allowedTopologies` and Ceph CRUSH buckets |
+| `topology [{topology.rbd.csi.ceph.com/zone …}] … not in requisite: [[{topology.kubernetes.io/zone …}]` | Node plugin missing `--domainlabels` | Add `--domainlabels=topology.kubernetes.io/zone` on `csi-rbdplugin` DaemonSet — [Step 2.2](#22-install-ceph-csi-latest-compatible-release); restart node pods; re-test PVC |
 | `Error EINVAL: unknown type zone-a` | Zone bucket name used as CRUSH type in `create-replicated` | Use `"${z}" host` — zone bucket as **root**, `host` as type — [F.7](#f7-create-per-zone-rbd-pools) |
 | `Error EINVAL` on `ceph auth get-or-create` | Space-separated pools in `osd` caps | Use comma-separated `profile rbd pool=...` — [F.8](#f8-create-csi-ceph-user-recommended-single-user) |
 | `csidriver rbd.csi.ceph.com` NotFound | `csidriver.yaml` not applied | Apply [Step 2.2](#22-install-ceph-csi-latest-compatible-release) `csidriver.yaml` |

@@ -140,6 +140,7 @@ PVC + Pod avec `nodeSelector: topology.kubernetes.io/zone: zone-a` — détail d
 | `csidriver rbd.csi.ceph.com` NotFound | `csidriver.yaml` non appliqué | [Step 2.2](External-Ceph-Cluster.md#22-install-ceph-csi-latest-compatible-release) |
 | CSI CrashLoop | PSA / SCC manquants | [Step 2.1, 2.4](External-Ceph-Cluster.md#step-2-deploy-ceph-csi-separate-from-odf) |
 | `no available topology found` | Labels ≠ StorageClass | `./topology/verify-alignment.sh` |
+| `topology.rbd.csi.ceph.com/zone … not in requisite … topology.kubernetes.io/zone` | `--domainlabels` absent sur le node plugin | [Step 2.2](External-Ceph-Cluster.md#22-install-ceph-csi-latest-compatible-release) — `--domainlabels=topology.kubernetes.io/zone` |
 | PVC Pending | `WaitForFirstConsumer` | Créer un Pod avec `nodeSelector` zone |
 | `Error EINVAL: unknown type zone-a` | Syntaxe CRUSH rule | [F.7](External-Ceph-Cluster.md#f7-create-per-zone-rbd-pools) — type `host`, pas le nom du bucket |
 | Volume dans la mauvaise zone | Pools ou labels incohérents | Vérifier `zones.env`, Ceph et manifests |

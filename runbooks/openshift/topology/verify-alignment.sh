@@ -99,6 +99,21 @@ else
   ok "02-label-nodes.sh sources topology/zones.env"
 fi
 
+# --- Ceph-CSI node plugin advertises the same topology key as the StorageClass ---
+CSI_NS="external-ceph-csi"
+if oc -n "${CSI_NS}" get daemonset csi-rbdplugin &>/dev/null; then
+  if oc -n "${CSI_NS}" get daemonset csi-rbdplugin -o json \
+      | jq -e --arg dl "${CSI_DOMAIN_LABELS}" \
+        '.spec.template.spec.containers[] | select(.name=="csi-rbdplugin") | .args[]? | select(test("^--domainlabels=")) | select(test($dl))' \
+      &>/dev/null; then
+    ok "DaemonSet csi-rbdplugin has --domainlabels=${CSI_DOMAIN_LABELS}"
+  else
+    fail "DaemonSet csi-rbdplugin missing --domainlabels=${CSI_DOMAIN_LABELS} (CSI advertises topology.rbd.csi.ceph.com/zone by default)"
+  fi
+else
+  echo "⚠️  DaemonSet csi-rbdplugin not found in ${CSI_NS} — skipping CSI domainLabels check"
+fi
+
 echo ""
 if [[ "$failures" -gt 0 ]]; then
   echo "❌  ${failures} alignment issue(s). Edit topology/zones.env and all Ceph/K8s objects together." >&2

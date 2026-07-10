@@ -1,3 +1,7 @@
+# Diagnosis: CSI node plugin advertises topology.rbd.csi.ceph.com/zone (default) but the
+# StorageClass uses topology.kubernetes.io/zone. Fix: --domainlabels=topology.kubernetes.io/zone
+# on the csi-rbdplugin DaemonSet — see External-Ceph-Cluster.md Step 2.2 and Troubleshooting.
+
 Generated from rbd.csi.ceph.com_csi-rbdplugin-provisioner-64dd55bf74-fkrm6_73e47ed2-ed57-4d3e-b44f-ea5db040b689
 10 times in the last 5 minutes
 error generating accessibility requirements: topology [{topology.rbd.csi.ceph.com/zone zone-a}] from selected node "ocp-node1" is not in requisite: [[{topology.kubernetes.io/zone zone-a}] [{topology.kubernetes.io/zone zone-b}] [{topology.kubernetes.io/zone zone-c}]]
