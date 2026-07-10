@@ -284,12 +284,17 @@ cd runbooks/openshift
 ./06-cleanup.sh
 ```
 
-For Option D, also remove the external CSI namespace and StorageClass manually if no longer needed:
+For Option D, tear down external Ceph zone resources and start over:
 
 ```bash
-oc delete storageclass ceph-external-zone-nr
-oc delete namespace external-ceph-csi
+cd runbooks/openshift
+CONFIRM=yes FULL=true ./06-cleanup-external-ceph.sh
+./topology/verify-k8s-clean.sh
+# On Ceph admin node:
+CONFIRM=yes ./topology/reset-ceph-zones.sh --with-csi-user --with-orch-labels
 ```
+
+Full procedure: [`External-Ceph-Cluster.md` § Rollback and reset](External-Ceph-Cluster.md#rollback-and-reset-start-from-zero).
 
 ---
 
@@ -329,11 +334,14 @@ pg-multizone/
     ├── topology/
     │   ├── zones.env                # canonical zone-a/b/c ↔ rbd-zone-* mapping
     │   ├── verify-alignment.sh      # OpenShift labels + manifests
-    │   └── verify-ceph-topology.sh  # Ceph CRUSH + pools (admin node)
+    │   ├── verify-k8s-clean.sh      # post-cleanup K8s verification
+    │   ├── verify-ceph-topology.sh  # Ceph CRUSH + pools (admin node)
+    │   └── reset-ceph-zones.sh      # Ceph pools + CRUSH rollback
     ├── 03-deploy-postgres.sh      # Options A–C only
     ├── 04-verify.sh
     ├── 05-test-connection.sh
     ├── 06-cleanup.sh
+    ├── 06-cleanup-external-ceph.sh  # Option D — OpenShift reset
     └── manifests/
         ├── storageclass-cephfs-multizone.yaml
         ├── storageclass-cephrbd-multizone-r.yaml

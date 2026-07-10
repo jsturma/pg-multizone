@@ -1427,6 +1427,201 @@ sudo cephadm shell -- ceph log last cephadm
 
 ---
 
+## Rollback and reset (start from zero)
+
+Use this to **tear down zone-local external Ceph resources** and redo F.6–F.9 / Steps 1–7. This does **not** destroy the Ceph cluster, OSDs, or ODF.
+
+### Order matters
+
+```mermaid
+flowchart TD
+  A[1. OpenShift — delete PVCs / namespaces]
+  B[2. Ceph — pools + CRUSH zones + rules]
+  C[3. Optional — CSI user / node labels]
+  D[4. Re-deploy from F.6 or Step 1.2]
+
+  A --> B --> C --> D
+```
+
+| Layer | What is removed | What is kept |
+|-------|-----------------|--------------|
+| Kubernetes / OpenShift | PVCs, `pg-multizone`, `sc-test`, `ceph-external-zone-nr`, `external-ceph-csi`, secrets, ConfigMap, CSI workloads | ODF `openshift-storage`, cluster nodes |
+| Optional (K8s) | `CSIDriver`, cluster CSI RBAC, `topology.kubernetes.io/zone` labels, orphan PVs, SCC bindings | Other StorageClasses / CSIDrivers |
+| Ceph | Pools `rbd-zone-*`, rules `replicated-zone-*`, buckets `zone-*` | OSDs, monitors, `default` root, ODF pools |
+| Optional (Ceph) | `client.csi-rbd-external`, orch zone labels | Ceph cluster health |
+
+### Step R.1 — Kubernetes / OpenShift cleanup
+
+Requires `CONFIRM=yes`. **Full reset** (recommended before redo from scratch):
+
+```bash
+cd runbooks/openshift
+CONFIRM=yes FULL=true ./06-cleanup-external-ceph.sh
+```
+
+`FULL=true` removes everything below including CSIDriver, zone labels, and cluster-scoped Ceph-CSI RBAC.
+
+| Resource | Namespace / scope | Removed by |
+|----------|-------------------|------------|
+| PostgreSQL, PVCs, Pods | `pg-multizone` | namespace delete |
+| Test PVCs / Pods | `sc-test` | namespace delete |
+| StorageClass | cluster | `ceph-external-zone-nr` |
+| CSI Deployment / DaemonSet | `external-ceph-csi` | namespace delete |
+| Secret `csi-rbd-secret` | `external-ceph-csi` | namespace delete |
+| ConfigMap `ceph-csi-config` | `external-ceph-csi` | namespace delete |
+| PSA labels | `external-ceph-csi` | namespace delete |
+| SCC `privileged` on CSI SAs | OpenShift | `remove-scc-from-user` (best-effort) |
+| `CSIDriver` `rbd.csi.ceph.com` | cluster | `FULL=true` |
+| Ceph-CSI ClusterRole(Binding)s | cluster | `FULL=true` |
+| Orphan PVs (`Released`) | cluster | script |
+| Node labels `topology.kubernetes.io/zone` | nodes | `FULL=true` |
+
+**Not removed:** ODF namespace `openshift-storage`, `openshift-storage.rbd.csi.ceph.com`, unrelated namespaces.
+
+Granular flags (instead of `FULL=true`):
+
+```bash
+CONFIRM=yes DELETE_CSIDRIVER=true STRIP_ZONE_LABELS=true \
+  DELETE_CSI_CLUSTER_RBACS=true ./06-cleanup-external-ceph.sh
+```
+
+Works with `kubectl` on plain Kubernetes:
+
+```bash
+CONFIRM=yes FULL=true KUBE_CMD=kubectl ./06-cleanup-external-ceph.sh
+```
+
+Verify Kubernetes layer is clean:
+
+```bash
+./topology/verify-k8s-clean.sh
+# After FULL=true:
+CHECK_CSIDRIVER=true CHECK_ZONE_LABELS=true ./topology/verify-k8s-clean.sh
+```
+
+<details>
+<summary>Manual Kubernetes teardown (if script unavailable)</summary>
+
+```bash
+# 1. Delete every PVC using the StorageClass
+oc get pvc -A -o json | jq -r '
+  .items[] | select(.spec.storageClassName=="ceph-external-zone-nr")
+  | "\(.metadata.namespace) \(.metadata.name)"' \
+| while read -r ns name; do oc delete pvc -n "$ns" "$name"; done
+
+# 2. Namespaces
+oc delete namespace pg-multizone sc-test external-ceph-csi --ignore-not-found
+
+# 3. StorageClass
+oc delete storageclass ceph-external-zone-nr --ignore-not-found
+
+# 4. Orphan PVs
+oc get pv -o json | jq -r '
+  .items[] | select(.spec.storageClassName=="ceph-external-zone-nr")
+  | select(.status.phase=="Released") | .metadata.name' \
+| xargs -r oc delete pv
+
+# 5. CSIDriver + cluster RBAC (full redo)
+oc delete csidriver rbd.csi.ceph.com --ignore-not-found
+oc delete clusterrolebinding rbd-external-provisioner-runner --ignore-not-found
+oc delete clusterrole rbd-external-provisioner-runner --ignore-not-found
+
+# 6. Zone labels (optional)
+oc label node --all topology.kubernetes.io/zone- --overwrite
+
+# 7. OpenShift SCC
+oc adm policy remove-scc-from-user privileged -z rbd-csi-provisioner -n external-ceph-csi
+oc adm policy remove-scc-from-user privileged -z rbd-csi-nodeplugin -n external-ceph-csi
+```
+
+</details>
+
+### Step R.2 — Ceph cleanup (admin node)
+
+```bash
+# Set hostnames if auto-detect fails (must match F.4 / crush tree)
+export CEPH_HOSTS="ceph-node1 ceph-node2 ceph-node3"
+
+CONFIRM=yes bash runbooks/openshift/topology/reset-ceph-zones.sh \
+  --with-csi-user --with-orch-labels
+```
+
+Without `cephadm shell` on the admin host:
+
+```bash
+CONFIRM=yes CEPH_CMD="sudo cephadm shell -- ceph" \
+  RBD_CMD="sudo cephadm shell -- rbd" \
+  bash runbooks/openshift/topology/reset-ceph-zones.sh --with-csi-user
+```
+
+The script:
+
+1. Purges RBD images and deletes pools `rbd-zone-a/b/c`
+2. Removes CRUSH rules `replicated-zone-a/b/c`
+3. Moves host buckets under `root=default`
+4. Removes zone buckets `zone-a/b/c`
+5. Optionally removes orch zone labels and `client.csi-rbd-external`
+
+### Step R.3 — Verify clean state
+
+**Kubernetes / OpenShift:**
+
+```bash
+cd runbooks/openshift
+CHECK_CSIDRIVER=true CHECK_ZONE_LABELS=true ./topology/verify-k8s-clean.sh
+```
+
+**Ceph (admin node):**
+ceph osd pool ls | grep rbd-zone || echo "OK: no rbd-zone-* pools"
+ceph osd crush rule ls | grep replicated-zone || echo "OK: no replicated-zone-* rules"
+ceph osd tree
+bash runbooks/openshift/topology/verify-ceph-topology.sh
+# Expected: fails until you recreate zones — confirms reset worked
+```
+
+### Step R.4 — Redeploy
+
+| Path | Start at |
+|------|----------|
+| Fresh install | [F.6 Configure CRUSH zones](#f6-configure-crush-zones) |
+| Existing cluster | [Step 1.2 Create zone buckets](#12-create-zone-buckets-and-place-hosts) |
+
+Then continue through CSI (Step 2), labels (Step 3), StorageClass (Step 4), tests, PostgreSQL.
+
+### Manual Ceph commands (if script unavailable)
+
+<details>
+<summary>Manual pool / CRUSH teardown</summary>
+
+```bash
+# After all PVCs are deleted on OpenShift
+for z in zone-a zone-b zone-c; do
+  pool="rbd-${z}"
+  rbd ls -p "$pool" 2>/dev/null | while read -r img; do
+    rbd rm -p "$pool" "$img" --force
+  done
+  ceph osd pool delete "$pool" "$pool" --yes-i-really-really-mean-it
+  ceph osd crush rule rm "replicated-${z}"
+done
+
+ceph osd crush move ceph-node1 root=default
+ceph osd crush move ceph-node2 root=default
+ceph osd crush move ceph-node3 root=default
+
+ceph osd crush remove zone-a
+ceph osd crush remove zone-b
+ceph osd crush remove zone-c
+
+ceph auth del client.csi-rbd-external
+ceph osd tree
+```
+
+</details>
+
+> **Warning:** Pool deletion is **irreversible**. Export or snapshot data before reset. CRUSH changes may trigger brief rebalancing — monitor `ceph -s`.
+
+---
+
 ## Related documentation
 
 - [`README.md`](README.md) — pg-multizone runbook overview

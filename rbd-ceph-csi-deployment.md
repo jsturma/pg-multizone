@@ -149,6 +149,39 @@ Table complète : [Troubleshooting](External-Ceph-Cluster.md#troubleshooting) da
 
 ---
 
+## Rollback — repartir de zéro
+
+Ordre : **Kubernetes/OpenShift d’abord**, puis **Ceph**.
+
+```bash
+# 1. Kubernetes / OpenShift (reset complet)
+cd runbooks/openshift
+CONFIRM=yes FULL=true ./06-cleanup-external-ceph.sh
+CHECK_CSIDRIVER=true CHECK_ZONE_LABELS=true ./topology/verify-k8s-clean.sh
+
+# 2. Ceph (nœud admin)
+export CEPH_HOSTS="ceph-node1 ceph-node2 ceph-node3"
+CONFIRM=yes ./topology/reset-ceph-zones.sh --with-csi-user --with-orch-labels
+```
+
+### Côté Kubernetes — ce qui est supprimé (`FULL=true`)
+
+| Ressource | Détail |
+|-----------|--------|
+| Namespaces | `pg-multizone`, `sc-test`, `external-ceph-csi` |
+| StorageClass | `ceph-external-zone-nr` |
+| PVC / PV | Tous ceux liés à la StorageClass |
+| CSI | Deployment, DaemonSet, secrets, ConfigMap |
+| Cluster | `CSIDriver`, ClusterRole(Binding) Ceph-CSI |
+| Nœuds | Labels `topology.kubernetes.io/zone` |
+| OpenShift | Liaisons SCC `privileged` sur les SA CSI |
+
+**Conservé :** ODF (`openshift-storage`), autres StorageClasses.
+
+Détail : [Rollback and reset](External-Ceph-Cluster.md#rollback-and-reset-start-from-zero).
+
+---
+
 ## Ce qui a été retiré de ce document
 
 Les versions précédentes concaténaient plusieurs brouillons en double :
