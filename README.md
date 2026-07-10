@@ -118,8 +118,8 @@ Then complete Steps 2–4 (Ceph-CSI, node labels, StorageClass).
 ```bash
 cd runbooks/openshift
 oc create namespace pg-multizone 2>/dev/null || true
-oc apply -f manifests/configmap.yaml -f manifests/secret.yaml -f manifests/service.yaml
-oc apply -f manifests/statefulset-external-rbd-nr.yaml
+oc apply -f manifests/pg/configmap.yaml -f manifests/pg/secret.yaml -f manifests/pg/service.yaml
+oc apply -f manifests/pg/statefulset-external-rbd-nr.yaml
 ./04-verify.sh
 ./05-test-connection.sh
 ```
@@ -157,8 +157,8 @@ Follow [`STORAGECLASS.md`](runbooks/openshift/STORAGECLASS.md):
    ```bash
    oc get storageclass ocs-storagecluster-cephfs -o jsonpath='clusterID={.parameters.clusterID}{"\n"}fsName={.parameters.fsName}{"\n"}pool={.parameters.pool}{"\n"}'
    ```
-3. Edit [`manifests/storageclass-cephfs-multizone.yaml`](runbooks/openshift/manifests/storageclass-cephfs-multizone.yaml)
-4. Apply: `oc apply -f manifests/storageclass-cephfs-multizone.yaml`
+3. Edit [`manifests/topology/storageclass-cephfs-multizone.yaml`](runbooks/openshift/manifests/topology/storageclass-cephfs-multizone.yaml)
+4. Apply: `oc apply -f manifests/topology/storageclass-cephfs-multizone.yaml`
 
 Use `volumeBindingMode: Immediate` (CephFS does not support `WaitForFirstConsumer`).
 
@@ -176,7 +176,7 @@ Documented in [`STORAGECLASS-RBD.md`](runbooks/openshift/STORAGECLASS-RBD.md):
 Quick start (resilient):
 
 ```bash
-oc apply -f runbooks/openshift/manifests/storageclass-cephrbd-multizone-r.yaml
+oc apply -f runbooks/openshift/manifests/topology/storageclass-cephrbd-multizone-r.yaml
 cd runbooks/openshift && ./03-deploy-postgres.sh cephrbd-r
 ```
 
@@ -185,7 +185,7 @@ cd runbooks/openshift && ./03-deploy-postgres.sh cephrbd-r
 Full end-to-end guide: [`External-Ceph-Cluster.md`](External-Ceph-Cluster.md).
 
 ```bash
-oc apply -f runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml
+oc apply -f runbooks/openshift/manifests/topology/storageclass-ceph-external-zone-nr.yaml
 ```
 
 Prerequisites: Ceph pools `rbd-zone-a/b/c`, Ceph-CSI in `external-ceph-csi`, node zone labels.
@@ -237,16 +237,27 @@ Or interactively (only backends whose StorageClass exists in the cluster):
 
 ### Manifests
 
+**Topology / zone** ([`manifests/topology/`](runbooks/openshift/manifests/topology/)) — StorageClasses, `topologyConstrainedPools`, `allowedTopologies`:
+
 | File | StorageClass | Used by |
 |------|--------------|---------|
-| [`configmap.yaml`](runbooks/openshift/manifests/configmap.yaml) | — | All paths |
-| [`secret.yaml`](runbooks/openshift/manifests/secret.yaml) | — | All paths |
-| [`service.yaml`](runbooks/openshift/manifests/service.yaml) | — | All paths |
-| [`statefulset.yaml`](runbooks/openshift/manifests/statefulset.yaml) | `cephfs-multizone` | `deploy.sh` / `cephfs` |
-| [`statefulset-rbd.yaml`](runbooks/openshift/manifests/statefulset-rbd.yaml) | `cephrbd-multizone-r` | `deploy-rbd.sh` / `cephrbd-r` |
-| [`statefulset-rbd-nr.yaml`](runbooks/openshift/manifests/statefulset-rbd-nr.yaml) | `cephrbd-multizone-nr` | `deploy-rbd-nr.sh` / `cephrbd-nr` |
-| [`statefulset-external-rbd-nr.yaml`](runbooks/openshift/manifests/statefulset-external-rbd-nr.yaml) | `ceph-external-zone-nr` | Option D |
-| [`route.yaml`](runbooks/openshift/manifests/route.yaml) | — | Optional |
+| [`storageclass-cephfs-multizone.yaml`](runbooks/openshift/manifests/topology/storageclass-cephfs-multizone.yaml) | `cephfs-multizone` | Option A |
+| [`storageclass-cephrbd-multizone-r.yaml`](runbooks/openshift/manifests/topology/storageclass-cephrbd-multizone-r.yaml) | `cephrbd-multizone-r` | Option B |
+| [`storageclass-cephrbd-multizone-nr.yaml`](runbooks/openshift/manifests/topology/storageclass-cephrbd-multizone-nr.yaml) | `cephrbd-multizone-nr` | Option C |
+| [`storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/topology/storageclass-ceph-external-zone-nr.yaml) | `ceph-external-zone-nr` | Option D |
+
+**PostgreSQL** ([`manifests/pg/`](runbooks/openshift/manifests/pg/)) — workload only; zone affinity references `topology/zones.env`:
+
+| File | StorageClass | Used by |
+|------|--------------|---------|
+| [`configmap.yaml`](runbooks/openshift/manifests/pg/configmap.yaml) | — | All paths |
+| [`secret.yaml`](runbooks/openshift/manifests/pg/secret.yaml) | — | All paths |
+| [`service.yaml`](runbooks/openshift/manifests/pg/service.yaml) | — | All paths |
+| [`statefulset.yaml`](runbooks/openshift/manifests/pg/statefulset.yaml) | `cephfs-multizone` | `deploy.sh` / `cephfs` |
+| [`statefulset-rbd.yaml`](runbooks/openshift/manifests/pg/statefulset-rbd.yaml) | `cephrbd-multizone-r` | `deploy-rbd.sh` / `cephrbd-r` |
+| [`statefulset-rbd-nr.yaml`](runbooks/openshift/manifests/pg/statefulset-rbd-nr.yaml) | `cephrbd-multizone-nr` | `deploy-rbd-nr.sh` / `cephrbd-nr` |
+| [`statefulset-external-rbd-nr.yaml`](runbooks/openshift/manifests/pg/statefulset-external-rbd-nr.yaml) | `ceph-external-zone-nr` | Option D |
+| [`route.yaml`](runbooks/openshift/manifests/pg/route.yaml) | — | Optional |
 
 Expose via Route (ODF paths only):
 
@@ -343,18 +354,20 @@ pg-multizone/
     ├── 06-cleanup.sh
     ├── 06-cleanup-external-ceph.sh  # Option D — OpenShift reset
     └── manifests/
-        ├── storageclass-cephfs-multizone.yaml
-        ├── storageclass-cephrbd-multizone-r.yaml
-        ├── storageclass-cephrbd-multizone-nr.yaml
-        ├── storageclass-ceph-external-zone-nr.yaml
-        ├── configmap.yaml
-        ├── secret.yaml
-        ├── service.yaml
-        ├── statefulset.yaml
-        ├── statefulset-rbd.yaml
-        ├── statefulset-rbd-nr.yaml
-        ├── statefulset-external-rbd-nr.yaml
-        └── route.yaml
+        ├── topology/                # StorageClasses — zone labels, topologyConstrainedPools
+        │   ├── storageclass-cephfs-multizone.yaml
+        │   ├── storageclass-cephrbd-multizone-r.yaml
+        │   ├── storageclass-cephrbd-multizone-nr.yaml
+        │   └── storageclass-ceph-external-zone-nr.yaml
+        └── pg/                      # PostgreSQL — ConfigMap, Secret, Service, StatefulSets
+            ├── configmap.yaml
+            ├── secret.yaml
+            ├── service.yaml
+            ├── statefulset.yaml
+            ├── statefulset-rbd.yaml
+            ├── statefulset-rbd-nr.yaml
+            ├── statefulset-external-rbd-nr.yaml
+            └── route.yaml
 ```
 
 ---

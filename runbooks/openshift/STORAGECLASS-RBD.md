@@ -4,8 +4,8 @@ This runbook creates **two** optional RBD StorageClasses. You can install one or
 
 | StorageClass | Ceph pool type | Binding | Zone-local PVC | Manifest |
 |--------------|----------------|---------|----------------|----------|
-| **`cephrbd-multizone-r`** | Resilient (3-way replicated `ocs-storagecluster-cephblockpool`) | `Immediate` | No | [`storageclass-cephrbd-multizone-r.yaml`](manifests/storageclass-cephrbd-multizone-r.yaml) |
-| **`cephrbd-multizone-nr`** | Non-resilient (replica-1 per zone) | `WaitForFirstConsumer` | Yes | [`storageclass-cephrbd-multizone-nr.yaml`](manifests/storageclass-cephrbd-multizone-nr.yaml) |
+| **`cephrbd-multizone-r`** | Resilient (3-way replicated `ocs-storagecluster-cephblockpool`) | `Immediate` | No | [`storageclass-cephrbd-multizone-r.yaml`](manifests/topology/storageclass-cephrbd-multizone-r.yaml) |
+| **`cephrbd-multizone-nr`** | Non-resilient (replica-1 per zone) | `WaitForFirstConsumer` | Yes | [`storageclass-cephrbd-multizone-nr.yaml`](manifests/topology/storageclass-cephrbd-multizone-nr.yaml) |
 
 Deploy PostgreSQL with:
 
@@ -29,7 +29,7 @@ oc get storageclass ocs-storagecluster-ceph-rbd -o yaml \
   | oc apply -f -
 
 # Option B: bundled template
-oc apply -f manifests/storageclass-cephrbd-multizone-r.yaml
+oc apply -f manifests/topology/storageclass-cephrbd-multizone-r.yaml
 ```
 
 Verify:
@@ -65,8 +65,8 @@ oc get storageclass ocs-storagecluster-ceph-non-resilient-rbd -o yaml \
   | oc apply -f -
 
 # Option B: edit and apply template
-# manifests/storageclass-cephrbd-multizone-nr.yaml
-oc apply -f manifests/storageclass-cephrbd-multizone-nr.yaml
+# manifests/topology/storageclass-cephrbd-multizone-nr.yaml
+oc apply -f manifests/topology/storageclass-cephrbd-multizone-nr.yaml
 ```
 
 Verify:
@@ -123,7 +123,7 @@ Your cluster matches if `oc get cephblockpool` shows only:
 ocs-storagecluster-cephblockpool   Ready   Replicated   host
 ```
 
-Apply [`manifests/storageclass-cephrbd-multizone-r.yaml`](manifests/storageclass-cephrbd-multizone-r.yaml) or clone `ocs-storagecluster-ceph-rbd`.
+Apply [`manifests/topology/storageclass-cephrbd-multizone-r.yaml`](manifests/topology/storageclass-cephrbd-multizone-r.yaml) or clone `ocs-storagecluster-ceph-rbd`.
 
 Pod zone spread: [`02-label-nodes.sh`](02-label-nodes.sh). Volumes use the shared replicated pool.
 
@@ -143,7 +143,7 @@ Pod zone spread: [`02-label-nodes.sh`](02-label-nodes.sh). Volumes use the share
 ./03-deploy-postgres.sh cephrbd-nr
 ```
 
-Uses [`manifests/statefulset-rbd-nr.yaml`](manifests/statefulset-rbd-nr.yaml).
+Uses [`manifests/pg/statefulset-rbd-nr.yaml`](manifests/pg/statefulset-rbd-nr.yaml).
 
 ---
 

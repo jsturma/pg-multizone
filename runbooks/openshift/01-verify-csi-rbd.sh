@@ -30,7 +30,7 @@ if oc get storageclass cephrbd-multizone-r &>/dev/null; then
   echo "  ✅  already created"
 elif oc get storageclass ocs-storagecluster-ceph-rbd &>/dev/null; then
   echo "  ⚠️  not found — create with:"
-  echo "     oc apply -f manifests/storageclass-cephrbd-multizone-r.yaml"
+  echo "     oc apply -f manifests/topology/storageclass-cephrbd-multizone-r.yaml"
 else
   echo "  ❌  ocs-storagecluster-ceph-rbd missing"
 fi

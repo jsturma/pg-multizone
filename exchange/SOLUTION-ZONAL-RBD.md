@@ -35,7 +35,7 @@ cd runbooks/openshift
 oc get storageclass ocs-storagecluster-ceph-rbd -o yaml \
   | sed 's/name: ocs-storagecluster-ceph-rbd/name: cephrbd-multizone/' \
   | oc apply -f -
-# or: oc apply -f manifests/storageclass-cephrbd-multizone-simple.yaml
+# or: oc apply -f manifests/topology/storageclass-cephrbd-multizone-simple.yaml
 
 ./02-label-nodes.sh          # already labeled zone-a/b/c — safe to re-run
 ./03-deploy-postgres.sh cephrbd

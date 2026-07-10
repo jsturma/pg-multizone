@@ -23,9 +23,9 @@ Ce n’est **pas** un pool unique répliqué sur 3 zones (`size 3`, règle CRUSH
 | Ceph | pools RBD | `rbd-zone-a`, `rbd-zone-b`, `rbd-zone-c` | [F.7 / Step 1.3](External-Ceph-Cluster.md#f7-create-per-zone-rbd-pools) |
 | OpenShift | label nœud | `topology.kubernetes.io/zone=zone-a` … | [`topology/zones.env`](runbooks/openshift/topology/zones.env), [Step 3](External-Ceph-Cluster.md#step-3-label-openshift-nodes) |
 | ConfigMap | `ceph-csi-config` | `clusterID` logique + `monitors` **uniquement** | [Step 2.3](External-Ceph-Cluster.md#23-cluster-configmap) — **pas de zones** ; `clusterID` ≠ `ceph fsid` |
-| StorageClass | `topologyConstrainedPools` | `rbd-zone-a` ↔ `zone-a` … | [`storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml) |
+| StorageClass | `topologyConstrainedPools` | `rbd-zone-a` ↔ `zone-a` … | [`storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/topology/storageclass-ceph-external-zone-nr.yaml) |
 | StorageClass | `allowedTopologies` | `zone-a`, `zone-b`, `zone-c` | idem |
-| StatefulSet | affinité zone | `zone-a` … `zone-c` | [`statefulset-external-rbd-nr.yaml`](runbooks/openshift/manifests/statefulset-external-rbd-nr.yaml) |
+| StatefulSet | affinité zone | `zone-a` … `zone-c` | [`statefulset-external-rbd-nr.yaml`](runbooks/openshift/manifests/pg/statefulset-external-rbd-nr.yaml) |
 
 Source canonique des noms de zones : [`runbooks/openshift/topology/zones.env`](runbooks/openshift/topology/zones.env).
 
@@ -49,7 +49,7 @@ flowchart LR
 | 1 | Nœuds Ceph | [Fresh install F.1–F.9](External-Ceph-Cluster.md#fresh-install-ceph-on-3-linux-nodes) ou [Step 1 cluster existant](External-Ceph-Cluster.md#step-1-ceph-per-zone-pools-on-an-existing-cluster) |
 | 2 | OpenShift + admin Ceph | [Step 2 — Ceph-CSI](External-Ceph-Cluster.md#step-2-deploy-ceph-csi-separate-from-odf) |
 | 3 | OpenShift | `./02-label-nodes.sh` |
-| 4 | OpenShift | `oc apply -f manifests/storageclass-ceph-external-zone-nr.yaml` |
+| 4 | OpenShift | `oc apply -f manifests/topology/storageclass-ceph-external-zone-nr.yaml` |
 | 5–7 | OpenShift | Test PVC, PostgreSQL, vérification |
 
 ---
@@ -78,7 +78,7 @@ OpenShift requiert en plus : labels PSA `privileged`, SCC sur `rbd-csi-provision
 
 Ne pas utiliser l’ancien paramètre `topology:` (obsolète). Utiliser `topologyConstrainedPools` + `allowedTopologies` + `volumeBindingMode: WaitForFirstConsumer`.
 
-Manifeste du dépôt : [`runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml)
+Manifeste du dépôt : [`runbooks/openshift/manifests/topology/storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/topology/storageclass-ceph-external-zone-nr.yaml)
 
 ```yaml
 parameters:
@@ -139,11 +139,11 @@ PVC + Pod avec `nodeSelector: topology.kubernetes.io/zone: zone-a` — détail d
 |----------|----------------|--------|
 | `csidriver rbd.csi.ceph.com` NotFound | `csidriver.yaml` non appliqué | [Step 2.2](External-Ceph-Cluster.md#22-install-ceph-csi-latest-compatible-release) |
 | CSI CrashLoop | PSA / SCC manquants | [Step 2.1, 2.4](External-Ceph-Cluster.md#step-2-deploy-ceph-csi-separate-from-odf) |
-| `no available topology found` | Labels ≠ StorageClass | `./topology/verify-alignment.sh` |
-| `topology.rbd.csi.ceph.com/zone … not in requisite … topology.kubernetes.io/zone` | `--domainlabels` absent sur le node plugin | [Step 2.2](External-Ceph-Cluster.md#22-install-ceph-csi-latest-compatible-release) — `--domainlabels=topology.kubernetes.io/zone` |
+| `no available topology found` | Labels nœuds ≠ StorageClass / `zones.env` | [§3a](External-Ceph-Cluster.md#3a-fix-inconsistent-node-zone-labels) ; `./topology/verify-alignment.sh` |
+| `topology.rbd.csi.ceph.com/zone … not in requisite … topology.kubernetes.io/zone` | `--domainlabels` absent ou mauvaise valeur | [§2.2a](External-Ceph-Cluster.md#22a-patch-existing-deployment-domainlabels) (ajout) ou [§2.2b](External-Ceph-Cluster.md#22b-update-wrong-domainlabels-value) (remplacement) |
 | PVC Pending | `WaitForFirstConsumer` | Créer un Pod avec `nodeSelector` zone |
 | `Error EINVAL: unknown type zone-a` | Syntaxe CRUSH rule | [F.7](External-Ceph-Cluster.md#f7-create-per-zone-rbd-pools) — type `host`, pas le nom du bucket |
-| Volume dans la mauvaise zone | Pools ou labels incohérents | Vérifier `zones.env`, Ceph et manifests |
+| PVC/mount échoue ; cluster CSI inconnu | `clusterID` ConfigMap ≠ StorageClass | [§2.3a](External-Ceph-Cluster.md#23a-fix-inconsistent-clusterid) ; `./topology/verify-alignment.sh` |
 | `ceph osd tree` incohérent | Hôtes sous `default` au lieu de `zone-*` | `ceph osd crush move` ; sinon [F.6a crushtool](External-Ceph-Cluster.md#f6a-debug-manual-crush-inspection-via-crushtool-advanced) |
 
 Table complète : [Troubleshooting](External-Ceph-Cluster.md#troubleshooting) dans `External-Ceph-Cluster.md`.

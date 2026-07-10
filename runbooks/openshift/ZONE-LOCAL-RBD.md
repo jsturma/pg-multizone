@@ -127,7 +127,7 @@ Verify:
 oc get nodes -L topology.kubernetes.io/zone
 ```
 
-> **Important:** `domainSegments` in the StorageClass must use the **same label key and values** as your nodes. If nodes use `us-east-1a` instead of `zone-a`, update [`manifests/storageclass-cephrbd-multizone-nr.yaml`](manifests/storageclass-cephrbd-multizone-nr.yaml) accordingly.
+> **Important:** `domainSegments` in the StorageClass must use the **same label key and values** as your nodes. If nodes use `us-east-1a` instead of `zone-a`, update [`manifests/topology/storageclass-cephrbd-multizone-nr.yaml`](manifests/topology/storageclass-cephrbd-multizone-nr.yaml) accordingly.
 
 ---
 
@@ -181,11 +181,11 @@ oc get storageclass ocs-storagecluster-ceph-non-resilient-rbd -o yaml \
 ### Option B — Edit the topology template
 
 1. Copy `topologyConstrainedPools` from `ocs-storagecluster-ceph-non-resilient-rbd`.
-2. Edit [`manifests/storageclass-cephrbd-multizone-nr.yaml`](manifests/storageclass-cephrbd-multizone-nr.yaml).
+2. Edit [`manifests/topology/storageclass-cephrbd-multizone-nr.yaml`](manifests/topology/storageclass-cephrbd-multizone-nr.yaml).
 3. Replace `<CLUSTER_ID>`, `<POOL>`, `<POOL_ZONE_*>` and align `domainSegments` with your node labels.
 
 ```bash
-oc apply -f manifests/storageclass-cephrbd-multizone-nr.yaml
+oc apply -f manifests/topology/storageclass-cephrbd-multizone-nr.yaml
 ```
 
 Verify:
@@ -266,7 +266,7 @@ oc delete namespace sc-test
 ./03-deploy-postgres.sh cephrbd
 ```
 
-The StatefulSet ([`manifests/statefulset-rbd-nr.yaml`](manifests/statefulset-rbd-nr.yaml)) uses `cephrbd-multizone-nr`. With `WaitForFirstConsumer`, each `postgres-N` PVC should provision in the zone where that pod is scheduled.
+The StatefulSet ([`manifests/pg/statefulset-rbd-nr.yaml`](manifests/pg/statefulset-rbd-nr.yaml)) uses `cephrbd-multizone-nr`. With `WaitForFirstConsumer`, each `postgres-N` PVC should provision in the zone where that pod is scheduled.
 
 Verify:
 

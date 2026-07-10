@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MANIFESTS_DIR="${SCRIPT_DIR}/manifests"
+MANIFESTS_DIR="${SCRIPT_DIR}/manifests/pg"
 NAMESPACE="${NAMESPACE:-pg-multizone}"
 STORAGE_CLASS="${STORAGE_CLASS:-}"
 

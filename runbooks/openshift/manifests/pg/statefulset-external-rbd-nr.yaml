@@ -1,6 +1,6 @@
 # PostgreSQL StatefulSet — zone-local RBD via external Ceph (ceph-external-zone-nr)
 # Zone affinity values must match topology/zones.env and Ceph CRUSH bucket names.
-# Deploy with External-Ceph-Cluster.md Step 6
+# Path: manifests/pg/ — deploy with External-Ceph-Cluster.md Step 6
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

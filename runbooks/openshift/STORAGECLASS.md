@@ -54,7 +54,7 @@ pool=ocs-storagecluster-cephfilesystem-data0
 
 ## Step 3 — Edit the manifest template
 
-Open [`manifests/storageclass-cephfs-multizone.yaml`](manifests/storageclass-cephfs-multizone.yaml) and replace the placeholders:
+Open [`manifests/topology/storageclass-cephfs-multizone.yaml`](manifests/topology/storageclass-cephfs-multizone.yaml) and replace the placeholders:
 
 | Placeholder | Source |
 |-------------|--------|
@@ -69,7 +69,7 @@ If the ODF default class has extra parameters (e.g. `csi.storage.k8s.io/*` secre
 ## Step 4 — Apply and verify
 
 ```bash
-oc apply -f manifests/storageclass-cephfs-multizone.yaml
+oc apply -f manifests/topology/storageclass-cephfs-multizone.yaml
 oc get storageclass cephfs-multizone -o yaml
 ```
 

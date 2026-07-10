@@ -73,9 +73,9 @@ Fill this in as you work; you need every row before Step 2.
 | Pool names | `rbd-zone-a`, `rbd-zone-b`, `rbd-zone-c` | `rbd_pool_for_zone()` in `zones.env`; F.7 or Step 1.3 |
 | CSI Ceph user | `client.csi-rbd-external` | F.8-alt or Step 1.4 |
 | CSI user key | `(secret)` | `ceph auth get-key client.csi-rbd-external` |
-| `clusterID` in ConfigMap / StorageClass | `ceph-external` | **Logical** Ceph-CSI identifier — must match between ConfigMap and StorageClass; **not** the Ceph cluster FSID (`ceph fsid`) |
+| `clusterID` in ConfigMap / StorageClass | `ceph-external` | **`CSI_CLUSTER_ID`** in [`topology/zones.env`](runbooks/openshift/topology/zones.env) — logical Ceph-CSI key; must match both objects; **not** `ceph fsid` |
 | K8s zone label key | `topology.kubernetes.io/zone` | `K8S_ZONE_LABEL` in [`topology/zones.env`](runbooks/openshift/topology/zones.env) |
-| StorageClass name | `ceph-external-zone-nr` | [`manifests/storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml) |
+| StorageClass name | `ceph-external-zone-nr` | [`manifests/topology/storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/topology/storageclass-ceph-external-zone-nr.yaml) |
 | Ceph version | `20.2.x` Tentacle (example) | F.2 — latest Tentacle patch from [download.ceph.com](https://download.ceph.com/); confirm with `ceph version` after bootstrap |
 | Ceph major (for Ceph-CSI) | `20` | `CEPH_MAJOR` in [Step 2.2](#22-install-ceph-csi-latest-compatible-release) — from `ceph version` on admin node, or set manually |
 
@@ -92,9 +92,9 @@ All zone identifiers must use the **same strings** everywhere. Defaults live in 
 | Ceph orch host label | `zone=<value>` | `zone-a`, … | Same as K8s zone label **value** |
 | OpenShift node | `topology.kubernetes.io/zone` | `zone-a`, … | `K8S_ZONE_LABEL` + `ZONES` |
 | ConfigMap `ceph-csi-config` | `clusterID`, `monitors` only | `ceph-external`, mon IPs | Logical `clusterID` (≠ `ceph fsid`); **no zones** |
-| StorageClass | `topologyConstrainedPools` | `rbd-zone-a` ↔ `zone-a` | [`storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml) |
+| StorageClass | `topologyConstrainedPools` | `rbd-zone-a` ↔ `zone-a` | [`storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/topology/storageclass-ceph-external-zone-nr.yaml) |
 | StorageClass | `allowedTopologies` | `zone-a`, `zone-b`, `zone-c` | Same as node labels |
-| StatefulSet | `nodeAffinity` zone values | `zone-a`, … | [`statefulset-external-rbd-nr.yaml`](runbooks/openshift/manifests/statefulset-external-rbd-nr.yaml) |
+| StatefulSet | `nodeAffinity` zone values | `zone-a`, … | [`statefulset-external-rbd-nr.yaml`](runbooks/openshift/manifests/pg/statefulset-external-rbd-nr.yaml) |
 
 If your cloud provider already uses different zone names (e.g. `us-east-1a`), **change `ZONES` in `zones.env` first**, then recreate Ceph CRUSH buckets/pools and update every manifest row in the table above.
 
@@ -1149,15 +1149,11 @@ do
   fi
   printf '%s\n' "${body}" | oc apply -f -
 done
-
-# Already deployed without --domainlabels? Patch the DaemonSet and roll node pods:
-# oc -n external-ceph-csi patch daemonset csi-rbdplugin --type=json -p='[
-#   {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--domainlabels=topology.kubernetes.io/zone"}
-# ]'
-# oc -n external-ceph-csi rollout status daemonset/csi-rbdplugin
 ```
 
 > **Do not skip `csidriver.yaml`** — without it, `oc get csidriver rbd.csi.ceph.com` returns `NotFound` and CSI sidecars crash on startup.
+
+If CSI was **already deployed** without `--domainlabels`, see [§2.2a](#22a-patch-existing-deployment-domainlabels). If the flag exists but has the wrong label key, see [§2.2b](#22b-update-wrong-domainlabels-value).
 
 Or use the [Helm chart](https://github.com/ceph/ceph-csi/tree/devel/charts/ceph-csi-rbd) with `namespaceOverride: external-ceph-csi`, a chart version matching `${CEPH_CSI_VERSION}`, and:
 
@@ -1166,6 +1162,97 @@ topology:
   domainLabels:
     - topology.kubernetes.io/zone
 ```
+
+### 2.2a Patch existing deployment (`--domainlabels`)
+
+Use this when Ceph-CSI was installed **before** the `--domainlabels` flag was added in Step 2.2 (raw manifests or an older copy of this guide). Without it, the node plugin advertises `topology.rbd.csi.ceph.com/zone` while the StorageClass expects `topology.kubernetes.io/zone`, and PVC provisioning fails with:
+
+```text
+error generating accessibility requirements: topology [{topology.rbd.csi.ceph.com/zone zone-a}]
+from selected node "…" is not in requisite: [[{topology.kubernetes.io/zone zone-a}] …]
+```
+
+**1. Check** whether the flag is already present:
+
+```bash
+NS=external-ceph-csi
+oc -n "${NS}" get daemonset csi-rbdplugin -o json \
+  | jq -r '.spec.template.spec.containers[] | select(.name=="csi-rbdplugin") | .args[]?' \
+  | grep '^--domainlabels=' || echo "MISSING"
+```
+
+**2. Patch** the node plugin DaemonSet and wait for rollout (only when step 1 prints `MISSING`):
+
+```bash
+NS=external-ceph-csi
+oc -n "${NS}" patch daemonset csi-rbdplugin --type=json -p='[
+  {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--domainlabels=topology.kubernetes.io/zone"}
+]'
+oc -n "${NS}" rollout status daemonset/csi-rbdplugin
+```
+
+> If step 1 shows a **different** `--domainlabels=…` value, do not use `add` (it will fail or duplicate). Follow [§2.2b](#22b-update-wrong-domainlabels-value) to **replace** the arg. If you installed via **Helm**, set `topology.domainLabels: [topology.kubernetes.io/zone]` and `helm upgrade` instead of patching the DaemonSet by hand.
+
+**3. Verify** alignment (includes DaemonSet check):
+
+```bash
+cd runbooks/openshift && ./topology/verify-alignment.sh
+```
+
+**4. Re-test** provisioning — delete PVCs stuck in `ProvisioningFailed`, then repeat [Step 5](#step-5-test-zone-local-provisioning).
+
+### 2.2b Update wrong `--domainlabels` value
+
+Use this when `--domainlabels` is **already set** but to the wrong label key — for example `failure-domain/zone` (upstream comment example), a cloud AZ label, or any value **other than** `topology.kubernetes.io/zone`. The provisioner error is the same as in [§2.2a](#22a-patch-existing-deployment-domainlabels): node topology keys do not match `topologyConstrainedPools` / `allowedTopologies` on the StorageClass.
+
+**1. Inspect** the current value:
+
+```bash
+NS=external-ceph-csi
+WANT="topology.kubernetes.io/zone"
+
+oc -n "${NS}" get daemonset csi-rbdplugin -o json \
+  | jq -r --arg want "${WANT}" '
+    .spec.template.spec.containers[] | select(.name=="csi-rbdplugin") | .args[]?
+    | select(startswith("--domainlabels="))
+    | if . == ("--domainlabels=" + $want) then "OK: \(.)"
+      else "WRONG: \(.) — expected --domainlabels=\($want)" end
+  '
+```
+
+**2. Replace** the arg (finds the `csi-rbdplugin` container and arg index automatically):
+
+```bash
+NS=external-ceph-csi
+WANT="topology.kubernetes.io/zone"
+
+PATCH=$(oc -n "${NS}" get daemonset csi-rbdplugin -o json | jq -c --arg want "${WANT}" '
+  .spec.template.spec.containers
+  | to_entries[]
+  | select(.value.name == "csi-rbdplugin")
+  | .key as $ci
+  | .value.args
+  | to_entries[]
+  | select(.value | startswith("--domainlabels="))
+  | select(.value != ("--domainlabels=" + $want))
+  | {
+      op: "replace",
+      path: ("/spec/template/spec/containers/" + ($ci | tostring) + "/args/" + (.key | tostring)),
+      value: ("--domainlabels=" + $want)
+    }
+')
+
+if [[ -z "${PATCH}" || "${PATCH}" == "null" ]]; then
+  echo "Nothing to replace — already --domainlabels=${WANT}, or flag missing (use §2.2a)"
+else
+  oc -n "${NS}" patch daemonset csi-rbdplugin --type=json -p="[${PATCH}]"
+  oc -n "${NS}" rollout status daemonset/csi-rbdplugin
+fi
+```
+
+> **Helm:** set `topology.domainLabels: [topology.kubernetes.io/zone]` (remove other entries), then `helm upgrade` — do not hand-edit the DaemonSet or Helm will overwrite your patch on the next upgrade.
+
+**3. Verify** and re-test — same as [§2.2a steps 3–4](#22a-patch-existing-deployment-domainlabels).
 
 ### 2.3 Cluster ConfigMap
 
@@ -1197,6 +1284,97 @@ data:
     ]
 EOF
 ```
+
+If `clusterID` in the ConfigMap and StorageClass **do not match** each other (or do not match `ceph-external`), see [§2.3a](#23a-fix-inconsistent-clusterid).
+
+### 2.3a Fix inconsistent `clusterID`
+
+Ceph-CSI resolves the external cluster using the **logical** `clusterID` string. The same value must appear in:
+
+| Object | Field |
+|--------|-------|
+| ConfigMap `ceph-csi-config` | `config.json[0].clusterID` |
+| StorageClass `ceph-external-zone-nr` | `parameters.clusterID` |
+
+A common mistake is setting one side to the Ceph **FSID** (`ceph fsid`) and the other to `ceph-external`. Symptoms include PVC `ProvisioningFailed`, mount timeouts, or CSI logs mentioning an unknown / missing cluster configuration.
+
+Canonical value for this repo: **`ceph-external`** ([`CSI_CLUSTER_ID`](runbooks/openshift/topology/zones.env) in `zones.env`).
+
+**1. Check** all three sources:
+
+```bash
+NS=external-ceph-csi
+SC=ceph-external-zone-nr
+WANT="ceph-external"   # or: source runbooks/openshift/topology/zones.env && echo "${CSI_CLUSTER_ID}"
+
+CM_ID=$(oc -n "${NS}" get configmap ceph-csi-config -o json 2>/dev/null \
+  | jq -r '.data["config.json"] | fromjson | .[0].clusterID // "MISSING"' || echo "MISSING")
+SC_ID=$(oc get storageclass "${SC}" -o jsonpath='{.parameters.clusterID}' 2>/dev/null || echo "MISSING")
+
+echo "ConfigMap clusterID:      ${CM_ID}"
+echo "StorageClass clusterID:   ${SC_ID}"
+echo "Expected (this guide):    ${WANT}"
+
+if [[ "${CM_ID}" == "${WANT}" && "${SC_ID}" == "${WANT}" ]]; then
+  echo "OK — clusterID aligned"
+elif [[ "${CM_ID}" == "${SC_ID}" && "${CM_ID}" != "${WANT}" ]]; then
+  echo "INCONSISTENT WITH GUIDE — both match each other (${CM_ID}) but expected ${WANT}"
+else
+  echo "MISMATCH — ConfigMap and StorageClass must use the same clusterID"
+fi
+```
+
+Or run `./topology/verify-alignment.sh` (includes this check when objects exist).
+
+**2. Fix ConfigMap** (preserves monitor list; only changes `clusterID`):
+
+```bash
+NS=external-ceph-csi
+WANT="ceph-external"
+
+oc -n "${NS}" get configmap ceph-csi-config -o json \
+  | jq --arg want "${WANT}" '
+      .data["config.json"] = (
+        .data["config.json"] | fromjson
+        | .[0].clusterID = $want
+        | .
+        | tojson
+      )
+    ' \
+  | oc apply -f -
+```
+
+**3. Fix StorageClass** — `parameters` are **immutable**; you must delete and re-apply (no bound PVCs on this SC, or accept that existing PVCs keep the old `storageClassName` reference):
+
+```bash
+# Ensure no PVCs still use the SC (or delete test PVCs first)
+oc get pvc -A -o json \
+  | jq -r --arg sc ceph-external-zone-nr \
+    '.items[] | select(.spec.storageClassName==$sc) | "\(.metadata.namespace)/\(.metadata.name)"'
+
+oc delete storageclass ceph-external-zone-nr --ignore-not-found
+oc apply -f runbooks/openshift/manifests/topology/storageclass-ceph-external-zone-nr.yaml
+```
+
+> Change `WANT` / `CSI_CLUSTER_ID` in **both** places together if you deliberately use another logical name — never mix FSID on one side and a custom name on the other.
+
+**4. Restart** Ceph-CSI so pods reload `ceph-csi-config`:
+
+```bash
+NS=external-ceph-csi
+oc -n "${NS}" rollout restart deployment/csi-rbdplugin-provisioner
+oc -n "${NS}" rollout restart daemonset/csi-rbdplugin
+oc -n "${NS}" rollout status deployment/csi-rbdplugin-provisioner
+oc -n "${NS}" rollout status daemonset/csi-rbdplugin
+```
+
+**5. Verify** and re-test:
+
+```bash
+cd runbooks/openshift && ./topology/verify-alignment.sh
+```
+
+Then repeat [Step 5](#step-5-test-zone-local-provisioning) if PVCs failed earlier.
 
 ### 2.4 OpenShift SCC and pod restart
 
@@ -1256,14 +1434,114 @@ oc get nodes -L topology.kubernetes.io/zone
 
 > If your cloud provider already sets `topology.kubernetes.io/zone`, edit `ZONES` in [`topology/zones.env`](runbooks/openshift/topology/zones.env) and **align Ceph CRUSH buckets/pools** to those values — do not mix cloud zone names with different Ceph bucket names.
 
+If labels are **missing**, on the **wrong zone value**, or **do not match** the StorageClass / Ceph CRUSH names, see [§3a](#3a-fix-inconsistent-node-zone-labels).
+
+### 3a Fix inconsistent node zone labels
+
+Zone labels on OpenShift nodes must use the **same key and values** as:
+
+| Layer | Must match |
+|-------|------------|
+| [`zones.env`](runbooks/openshift/topology/zones.env) | `K8S_ZONE_LABEL`, `ZONES` |
+| StorageClass `ceph-external-zone-nr` | `allowedTopologies`, `topologyConstrainedPools.domainSegments` |
+| Ceph CRUSH buckets | `zone-a`, `zone-b`, `zone-c` (or your `ZONES` values) |
+
+Symptoms: `no available topology found`, PVC `Pending` with `WaitForFirstConsumer`, volumes provisioned in the wrong pool, or `verify-alignment.sh` failures on node / StorageClass rows.
+
+**1. Check** each node (status per canonical `ZONES`):
+
+```bash
+cd runbooks/openshift
+# shellcheck source=topology/zones.env
+source topology/zones.env
+
+echo "Label key:    ${K8S_ZONE_LABEL}"
+echo "Zones:        ${ZONES[*]}"
+echo ""
+
+oc get nodes -o json | jq -r --arg key "${K8S_ZONE_LABEL}" --arg canon "${ZONES[*]}" '
+  def canon: ($canon | split(" "));
+  .items[] |
+  (.metadata.name) as $node |
+  (.metadata.labels[$key] // "MISSING") as $zone |
+  (if $zone == "MISSING" then "MISSING"
+   elif (canon | index($zone)) != null then "OK"
+   else "WRONG_VALUE"
+   end) as $status |
+  "\($node)\t\($zone)\t\($status)"
+' | column -t -s $'\t'
+
+echo ""
+echo "Canonical zones without any node:"
+for z in "${ZONES[@]}"; do
+  count=$(oc get nodes -l "${K8S_ZONE_LABEL}=${z}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "${count}" == "0" ]]; then
+    echo "  MISSING: ${K8S_ZONE_LABEL}=${z}"
+  fi
+done
+
+echo ""
+echo "StorageClass allowed zones:"
+oc get storageclass ceph-external-zone-nr -o json 2>/dev/null \
+  | jq -r '.allowedTopologies[].matchLabelExpressions[] | "  \(.key): \(.values | join(", "))"' \
+  || echo "  (StorageClass not applied)"
+```
+
+Or run `./topology/verify-alignment.sh` (full cross-check).
+
+**2. Fix missing or wrong zone values** — re-apply labels (round-robin across Ready workers):
+
+```bash
+cd runbooks/openshift
+./02-label-nodes.sh
+```
+
+Or set explicit **node → zone** mapping (recommended when you know which worker is in which zone):
+
+```bash
+# Example — match your hostnames and Ceph CRUSH placement
+oc label node ocp-node1 topology.kubernetes.io/zone=zone-a --overwrite
+oc label node ocp-node2 topology.kubernetes.io/zone=zone-b --overwrite
+oc label node ocp-node3 topology.kubernetes.io/zone=zone-c --overwrite
+
+oc get nodes -L topology.kubernetes.io/zone
+```
+
+**3. Fix wrong label key** — when nodes use a different key (e.g. `failure-domain/zone`, `zone`) but the StorageClass expects `topology.kubernetes.io/zone`:
+
+```bash
+KEY="topology.kubernetes.io/zone"   # K8S_ZONE_LABEL from zones.env
+
+# Inspect other zone-like labels on a node
+oc get node ocp-node1 --show-labels | tr ' ' '\n' | grep -E 'zone|failure-domain' || true
+
+# Remove a stale key (trailing '-' removes the label), then set the canonical key
+oc label node ocp-node1 failure-domain/zone- zone- 2>/dev/null || true
+oc label node ocp-node1 "${KEY}=zone-a" --overwrite
+```
+
+Repeat for each node. Ceph-CSI `--domainlabels` must also reference `${KEY}` — see [§2.2a](#22a-patch-existing-deployment-domainlabels) / [§2.2b](#22b-update-wrong-domainlabels-value).
+
+**4. If you adopt cloud AZ names** (e.g. `us-east-1a`) — change **`ZONES` in `zones.env` first**, then update Ceph CRUSH buckets/pools, StorageClass manifest, and node labels **together**. Partial updates cause silent mismatches.
+
+**5. Verify** and re-test workloads:
+
+```bash
+cd runbooks/openshift && ./topology/verify-alignment.sh
+# On Ceph admin node:
+bash runbooks/openshift/topology/verify-ceph-topology.sh
+```
+
+Delete and recreate PVCs / pods stuck before the label fix ([Step 5](#step-5-test-zone-local-provisioning)) — `WaitForFirstConsumer` binds topology at schedule time.
+
 ---
 
 ## Step 4 — StorageClass (`ceph-external-zone-nr`)
 
-Apply the manifest from this repo. Edit **monitor IPs** in Step 2.3 only; **zone ↔ pool mapping** is already set in the StorageClass manifest (not in the ConfigMap):
+Apply the **topology** manifest from [`manifests/topology/`](runbooks/openshift/manifests/topology/) (zone ↔ pool mapping — not in the ConfigMap). Edit **monitor IPs** in Step 2.3 only:
 
 ```bash
-oc apply -f runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml
+oc apply -f runbooks/openshift/manifests/topology/storageclass-ceph-external-zone-nr.yaml
 oc get storageclass ceph-external-zone-nr
 
 cd runbooks/openshift && ./topology/verify-alignment.sh
@@ -1334,22 +1612,22 @@ Repeat with `nodeSelector` `zone-b` and `zone-c` before deploying PostgreSQL.
 
 ## Step 6 — Deploy pg-multizone PostgreSQL
 
-The main runbook [`03-deploy-postgres.sh`](runbooks/openshift/03-deploy-postgres.sh) targets ODF StorageClasses. For external Ceph, apply manifests directly:
+The main runbook [`03-deploy-postgres.sh`](runbooks/openshift/03-deploy-postgres.sh) targets ODF StorageClasses. For external Ceph, apply **PostgreSQL** manifests from [`manifests/pg/`](runbooks/openshift/manifests/pg/) directly:
 
 ```bash
 cd runbooks/openshift
 
 oc create namespace pg-multizone 2>/dev/null || true
-oc apply -f manifests/configmap.yaml
-oc apply -f manifests/secret.yaml
-oc apply -f manifests/service.yaml
-oc apply -f manifests/statefulset-external-rbd-nr.yaml
+oc apply -f manifests/pg/configmap.yaml
+oc apply -f manifests/pg/secret.yaml
+oc apply -f manifests/pg/service.yaml
+oc apply -f manifests/pg/statefulset-external-rbd-nr.yaml
 ```
 
 Optional Route:
 
 ```bash
-APPLY_ROUTE=true oc apply -f manifests/route.yaml
+APPLY_ROUTE=true oc apply -f manifests/pg/route.yaml
 ```
 
 ### Storage backend comparison
@@ -1423,13 +1701,14 @@ Copy and tick as you go:
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | PVC `Pending` | No pod scheduled yet | `WaitForFirstConsumer` — create a pod with zone `nodeSelector` |
-| `no available topology found` | Label mismatch | Run `./topology/verify-alignment.sh`; align `topology.kubernetes.io/zone` with `allowedTopologies` and Ceph CRUSH buckets |
-| `topology [{topology.rbd.csi.ceph.com/zone …}] … not in requisite: [[{topology.kubernetes.io/zone …}]` | Node plugin missing `--domainlabels` | Add `--domainlabels=topology.kubernetes.io/zone` on `csi-rbdplugin` DaemonSet — [Step 2.2](#22-install-ceph-csi-latest-compatible-release); restart node pods; re-test PVC |
+| `no available topology found` | Label mismatch | [§3a](#3a-fix-inconsistent-node-zone-labels); `./topology/verify-alignment.sh` |
+| `topology [{topology.rbd.csi.ceph.com/zone …}] … not in requisite: [[{topology.kubernetes.io/zone …}]` | Node plugin missing or wrong `--domainlabels` | Missing: [§2.2a](#22a-patch-existing-deployment-domainlabels). Wrong value: [§2.2b](#22b-update-wrong-domainlabels-value) |
 | `Error EINVAL: unknown type zone-a` | Zone bucket name used as CRUSH type in `create-replicated` | Use `"${z}" host` — zone bucket as **root**, `host` as type — [F.7](#f7-create-per-zone-rbd-pools) |
 | `Error EINVAL` on `ceph auth get-or-create` | Space-separated pools in `osd` caps | Use comma-separated `profile rbd pool=...` — [F.8](#f8-create-csi-ceph-user-recommended-single-user) |
 | `csidriver rbd.csi.ceph.com` NotFound | `csidriver.yaml` not applied | Apply [Step 2.2](#22-install-ceph-csi-latest-compatible-release) `csidriver.yaml` |
 | PSA `restricted:latest` warnings / CSI CrashLoop | Namespace not privileged | PSA labels + SCC — [Step 2.1](#21-create-namespace-pod-security-and-csi-secret), [2.4](#24-openshift-scc-and-pod-restart) |
 | CSI `CrashLoopBackOff` | SCC, secret, mon network, or missing CSIDriver | Check 2.1–2.4; `oc describe pod -n external-ceph-csi`; `nc mon 6789` from worker |
+| PVC/mount fails; CSI unknown cluster | `clusterID` mismatch ConfigMap ↔ StorageClass | [§2.3a](#23a-fix-inconsistent-clusterid); `./topology/verify-alignment.sh` |
 | `ceph orch host add` fails with `Auth failed for user root` | Ceph-managed SSH key missing on target node, or root SSH policy blocks it | Follow [F.4a](#f4a-troubleshoot-ceph-orch-host-add-ssh-auth-failures) and retry host add |
 | `cephadm add-repo` fails on `release.gpg` | Script expects `.gpg`; mirror serves `release.asc` only | Skip `add-repo` — [F.2b manual repo setup](#f2b-manual-repo-setup-when-add-repo-fails-releasegpg-vs-releaseasc) |
 | `cephadm bootstrap`: unknown option `--public-network` | Not a valid bootstrap flag | Remove it; set `ceph config set mon public_network <CIDR>` after bootstrap — [F.3](#f3-bootstrap-the-cluster) |
