@@ -143,6 +143,7 @@ PVC + Pod avec `nodeSelector: topology.kubernetes.io/zone: zone-a` — détail d
 | PVC Pending | `WaitForFirstConsumer` | Créer un Pod avec `nodeSelector` zone |
 | `Error EINVAL: unknown type zone-a` | Syntaxe CRUSH rule | [F.7](External-Ceph-Cluster.md#f7-create-per-zone-rbd-pools) — type `host`, pas le nom du bucket |
 | Volume dans la mauvaise zone | Pools ou labels incohérents | Vérifier `zones.env`, Ceph et manifests |
+| `ceph osd tree` incohérent | Hôtes sous `default` au lieu de `zone-*` | `ceph osd crush move` ; sinon [F.6a crushtool](External-Ceph-Cluster.md#f6a-debug--manual-crush-inspection-via-crushtool-advanced) |
 
 Table complète : [Troubleshooting](External-Ceph-Cluster.md#troubleshooting) dans `External-Ceph-Cluster.md`.
 
@@ -153,7 +154,7 @@ Table complète : [Troubleshooting](External-Ceph-Cluster.md#troubleshooting) da
 Les versions précédentes concaténaient plusieurs brouillons en double :
 
 - Runbook « pool unique multi-zone » (`rbd-multizone-3zones`, `size 3`) — **hors scope** pg-multizone (zone-local NR).
-- Édition manuelle CRUSH via `crushtool` — remplacée par `ceph osd crush add-bucket` / `move` dans le guide principal.
+- Édition manuelle CRUSH via `crushtool` — **debug uniquement** : [F.6a](External-Ceph-Cluster.md#f6a-debug--manual-crush-inspection-via-crushtool-advanced) dans le guide principal (procédure normale : `add-bucket` / `move`).
 - Paramètre StorageClass `topology:` — **obsolète** ; remplacé par `topologyConstrainedPools`.
 - Sections Helm / `clusterID` = `ceph fsid` répétées 3 fois — voir [Step 2](External-Ceph-Cluster.md#step-2--deploy-ceph-csi-separate-from-odf) pour la méthode manifests (recommandée ici).
 - Namespace `ceph-csi-rbd` / `default` — ce projet utilise `external-ceph-csi`.

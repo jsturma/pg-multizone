@@ -751,6 +751,102 @@ ceph osd tree
 '
 ```
 
+<details>
+<summary>F.6a Debug — manual CRUSH inspection via <code>crushtool</code> (advanced)</summary>
+
+Use this **only for troubleshooting** — not for the initial zone setup. Prefer [F.6](#f6-configure-crush-zones) (`add-bucket` / `move`) or [Step 1.2](#12-create-zone-buckets-and-place-hosts) in normal operation.
+
+**When `crushtool` helps**
+
+- `ceph osd tree` looks wrong but `add-bucket` / `move` fail with unclear errors.
+- You need to inspect the full map (types, bucket IDs, parent links).
+- A host bucket is under `default` instead of `zone-a` / `zone-b` / `zone-c` — often fixable with `ceph osd crush move` **without** editing text (try that first).
+- You must prove the map is valid before applying (`crushtool --test`).
+
+**Risks**
+
+- Applying a bad map can trigger **data rebalancing** or placement errors.
+- Always **backup** first; test in non-production when possible.
+- Run on a Ceph admin node (`cephadm shell` or host with `ceph` CLI).
+
+#### 1. Backup the live map
+
+```bash
+TS=$(date +%Y%m%d-%H%M%S)
+sudo cephadm shell -- ceph osd getcrushmap -o "/tmp/crushmap-${TS}.bin"
+cp "/tmp/crushmap-${TS}.bin" /tmp/crushmap-backup.bin
+```
+
+#### 2. Decompile to text
+
+```bash
+sudo cephadm shell -- crushtool -d /tmp/crushmap-backup.bin -o /tmp/crushmap.txt
+less /tmp/crushmap.txt
+```
+
+Check the `# types` section includes `zone` (type id varies by cluster). Target hierarchy for pg-multizone:
+
+```text
+default (root)
+├── zone-a (type zone)
+│   └── ceph-node1 (type host)
+│       └── osd.N
+├── zone-b (type zone)
+│   └── ceph-node2 (type host)
+└── zone-c (type zone)
+    └── ceph-node3 (type host)
+```
+
+In the text file, zone buckets are `type zone` entries; hosts must be **children of** `zone-a` / `zone-b` / `zone-c`, not direct children of `default`.
+
+#### 3. Try CLI fix before hand-editing
+
+If the map is wrong but buckets exist:
+
+```bash
+sudo cephadm shell -- ceph osd crush move ceph-node1 zone=zone-a
+sudo cephadm shell -- ceph osd crush move ceph-node2 zone=zone-b
+sudo cephadm shell -- ceph osd crush move ceph-node3 zone=zone-c
+sudo cephadm shell -- ceph osd tree
+```
+
+Only edit `/tmp/crushmap.txt` if CLI commands cannot repair the structure (orphan buckets, wrong type ids, legacy `straw` vs `straw2` issues on very old maps).
+
+#### 4. Validate a modified map (before apply)
+
+```bash
+sudo cephadm shell -- crushtool -c /tmp/crushmap.txt -o /tmp/crushmap-new.bin
+sudo cephadm shell -- crushtool --test --show-testing /tmp/crushmap-new.bin
+```
+
+Fix any errors reported by `--test` before continuing.
+
+#### 5. Apply (maintenance window recommended)
+
+```bash
+sudo cephadm shell -- ceph osd setcrushmap -i /tmp/crushmap-new.bin
+sudo cephadm shell -- ceph osd tree
+watch -n5 'sudo cephadm shell -- ceph -s'
+```
+
+#### 6. Rollback
+
+```bash
+sudo cephadm shell -- ceph osd setcrushmap -i /tmp/crushmap-backup.bin
+```
+
+#### 7. Confirm alignment with OpenShift
+
+```bash
+bash runbooks/openshift/topology/verify-ceph-topology.sh
+```
+
+Bucket names must still match [`topology/zones.env`](runbooks/openshift/topology/zones.env).
+
+> **Reference:** [Ceph CRUSH map edits](https://docs.ceph.com/en/latest/rados/operations/crush-map-edits/)
+
+</details>
+
 ### F.7 Create per-zone RBD pools
 
 CRUSH hierarchy after F.6: `default` → `zone-a/b/c` (type **zone**) → hosts (type **host**).
@@ -896,6 +992,8 @@ ceph osd crush move ocp-node3 zone=zone-c
 
 ceph osd tree
 ```
+
+> **Debug:** if `add-bucket` / `move` fail or `ceph osd tree` does not match [`zones.env`](runbooks/openshift/topology/zones.env), see [F.6a — manual CRUSH inspection via `crushtool`](#f6a-debug--manual-crush-inspection-via-crushtool-advanced) (backup, decompile, validate, rollback).
 
 > **Caution:** CRUSH moves can trigger rebalancing. Monitor `ceph -s` during changes.
 
@@ -1289,7 +1387,7 @@ Copy and tick as you go:
 
 | Topic | Recommendation |
 |-------|----------------|
-| **CRUSH changes** | Export map before edits; watch `ceph -s` |
+| **CRUSH changes** | Export map before edits; watch `ceph -s`; use [`crushtool` debug (F.6a)](#f6a-debug--manual-crush-inspection-via-crushtool-advanced) only when CLI `move` is insufficient |
 | **CSI user** | Dedicated `client.csi-rbd-external` — not `client.admin` |
 | **Version pin** | Fresh install: **Tentacle** (`CEPH_RELEASE=tentacle`), latest `20.x.y` patch from [download.ceph.com](https://download.ceph.com/). Ceph-CSI: latest GitHub tag — verify [compatibility](https://github.com/ceph/ceph-csi#ceph-csi-features-and-available-versions) with Ceph 20 |
 | **Network** | Mons + OSD public network reachable from all workers |
@@ -1315,6 +1413,7 @@ Copy and tick as you go:
 | `cephadm bootstrap`: unknown option `--public-network` | Not a valid bootstrap flag | Remove it; set `ceph config set mon public_network <CIDR>` after bootstrap — [F.3](#f3-bootstrap-the-cluster) |
 | `cephadm bootstrap` fails on FQDN hostname | Default expects short hostname | Add `--allow-fqdn-hostname`; use the same FQDN in `ceph orch host add` — [F.1](#f1-prepare-all-three-nodes), [F.3](#f3-bootstrap-the-cluster) |
 | PVC Bound, wrong zone pool | StorageClass topology | `oc describe pvc`; provisioner logs |
+| `ceph osd tree` wrong / move fails | Orphan hosts, bad bucket parents | Try `ceph osd crush move <host> zone=zone-a`; else [F.6a `crushtool` debug](#f6a-debug--manual-crush-inspection-via-crushtool-advanced) |
 | `pool does not exist` | Pools not created | `ceph osd pool ls \| grep rbd-zone` |
 | ODF impacted | Wrong namespace | Only touch `external-ceph-csi`; never edit `openshift-storage` pools |
 
