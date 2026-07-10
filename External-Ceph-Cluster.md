@@ -7,13 +7,13 @@ Use this guide when ODF cannot provision per-zone pools (e.g. `flexibleScaling: 
 | Path | When | Start here |
 |------|------|------------|
 | **Fresh install** (recommended) | No Ceph yet — 3 dedicated Linux nodes | [F.1](#f1-prepare-all-three-nodes) |
-| **Existing Ceph** | Separate Ceph cluster already running — not recommended on ODF-shared Ceph unless you accept CRUSH change risk | [Step 1](#step-1--ceph-per-zone-pools-on-an-existing-cluster) |
+| **Existing Ceph** | Separate Ceph cluster already running — not recommended on ODF-shared Ceph unless you accept CRUSH change risk | [Step 1](#step-1-ceph-per-zone-pools-on-an-existing-cluster) |
 
 > **Recommendation**  
 > For zone-local RBD when ODF non-resilient pools are unavailable, **prefer a fresh install** on three dedicated storage nodes. You get zone topology and per-zone pools (F.6–F.7) without touching ODF or redeploying OpenShift Data Foundation.  
 > Use the **existing-cluster** path only when you already operate an independent Ceph cluster with spare capacity — not as a shortcut to add pools on the same Ceph mons ODF uses unless you have tested CRUSH changes in non-production.
 
-Both paths merge at **[Step 2](#step-2--deploy-ceph-csi-separate-from-odf)** (CSI on OpenShift) and follow the same Steps 3–7.
+Both paths merge at **[Step 2](#step-2-deploy-ceph-csi-separate-from-odf)** (CSI on OpenShift) and follow the same Steps 3–7.
 
 ---
 
@@ -55,8 +55,8 @@ flowchart TD
 
 | Situation | Use this guide? |
 |-----------|-----------------|
-| **No Ceph yet** — dedicated storage nodes | **Yes** — [fresh install](#fresh-install--ceph-on-3-linux-nodes) (**recommended**) |
-| ODF `flexibleScaling: true`, `failureDomain: host` | **Yes** — [fresh install](#fresh-install--ceph-on-3-linux-nodes) preferred; [existing cluster](#step-1--ceph-per-zone-pools-on-an-existing-cluster) if you already have separate Ceph |
+| **No Ceph yet** — dedicated storage nodes | **Yes** — [fresh install](#fresh-install-ceph-on-3-linux-nodes) (**recommended**) |
+| ODF `flexibleScaling: true`, `failureDomain: host` | **Yes** — [fresh install](#fresh-install-ceph-on-3-linux-nodes) preferred; [existing cluster](#step-1-ceph-per-zone-pools-on-an-existing-cluster) if you already have separate Ceph |
 | ODF non-resilient pools already work | **No** — use [`ZONE-LOCAL-RBD.md`](runbooks/openshift/ZONE-LOCAL-RBD.md) with `cephrbd-multizone-nr` |
 | Greenfield ODF with zone topology | Prefer native ODF NR pools over a second CSI driver |
 
@@ -188,14 +188,14 @@ done
 | Access | `cluster-admin` on OpenShift; `ceph` CLI on a monitor/admin node |
 | Ceph | Healthy cluster; monitors reachable from all workers on port **6789** |
 | Topology | ≥ 3 zones with OSDs (or one OSD host per zone in lab) |
-| Nodes | Labelled `topology.kubernetes.io/zone` — [Step 3](#step-3--label-openshift-nodes) |
+| Nodes | Labelled `topology.kubernetes.io/zone` — [Step 3](#step-3-label-openshift-nodes) |
 | Change window | CRUSH edits on existing clusters — back up first; validate in non-prod |
 
 ---
 
 ## Fresh install — Ceph on 3 Linux nodes
 
-> **Skip this section if you already have a Ceph cluster** (e.g. shared with ODF). Go to [Step 1](#step-1--ceph-per-zone-pools-on-an-existing-cluster), then continue at [Step 2](#step-2--deploy-ceph-csi-separate-from-odf).
+> **Skip this section if you already have a Ceph cluster** (e.g. shared with ODF). Go to [Step 1](#step-1-ceph-per-zone-pools-on-an-existing-cluster), then continue at [Step 2](#step-2-deploy-ceph-csi-separate-from-odf).
 
 Deploy a **standalone Ceph cluster** on three Linux hosts with zone topology from day one. OpenShift connects via Ceph-CSI in Step 2 — no ODF required on the storage nodes.
 
@@ -751,8 +751,7 @@ ceph osd tree
 '
 ```
 
-<details>
-<summary>F.6a Debug — manual CRUSH inspection via <code>crushtool</code> (advanced)</summary>
+### F.6a Debug — manual CRUSH inspection via crushtool (advanced)
 
 Use this **only for troubleshooting** — not for the initial zone setup. Prefer [F.6](#f6-configure-crush-zones) (`add-bucket` / `move`) or [Step 1.2](#12-create-zone-buckets-and-place-hosts) in normal operation.
 
@@ -844,8 +843,6 @@ bash runbooks/openshift/topology/verify-ceph-topology.sh
 Bucket names must still match [`topology/zones.env`](runbooks/openshift/topology/zones.env).
 
 > **Reference:** [Ceph CRUSH map edits](https://docs.ceph.com/en/latest/rados/operations/crush-map-edits/)
-
-</details>
 
 ### F.7 Create per-zone RBD pools
 
@@ -947,13 +944,13 @@ sudo cephadm shell -- ceph mon dump | grep -oE '[0-9.]+:6789' | paste -sd,
 | Pools | `rbd-zone-a`, `rbd-zone-b`, `rbd-zone-c` |
 | Network from worker | `nc -zv <mon-ip> 6789` succeeds |
 
-**Checkpoint:** pools, CSI user, and mon IPs recorded → continue at [Step 2](#step-2--deploy-ceph-csi-separate-from-odf). Skip [Step 1](#step-1--ceph-per-zone-pools-on-an-existing-cluster).
+**Checkpoint:** pools, CSI user, and mon IPs recorded → continue at [Step 2](#step-2-deploy-ceph-csi-separate-from-odf). Skip [Step 1](#step-1-ceph-per-zone-pools-on-an-existing-cluster).
 
 ---
 
 ## Step 1 — Ceph: per-zone pools on an existing cluster
 
-> **Skip this section if you completed a [fresh install](#fresh-install--ceph-on-3-linux-nodes)** (F.1–F.9). Pools and users are in F.6–F.8. Continue at [Step 2](#step-2--deploy-ceph-csi-separate-from-odf).
+> **Skip this section if you completed a [fresh install](#fresh-install-ceph-on-3-linux-nodes)** (F.1–F.9). Pools and users are in F.6–F.8. Continue at [Step 2](#step-2-deploy-ceph-csi-separate-from-odf).
 
 **Goal:** Create **one new RBD pool per zone** with `size 1`. Existing ODF pools stay untouched.
 
@@ -993,7 +990,7 @@ ceph osd crush move ocp-node3 zone=zone-c
 ceph osd tree
 ```
 
-> **Debug:** if `add-bucket` / `move` fail or `ceph osd tree` does not match [`zones.env`](runbooks/openshift/topology/zones.env), see [F.6a — manual CRUSH inspection via `crushtool`](#f6a-debug--manual-crush-inspection-via-crushtool-advanced) (backup, decompile, validate, rollback).
+> **Debug:** if `add-bucket` / `move` fail or `ceph osd tree` does not match [`zones.env`](runbooks/openshift/topology/zones.env), see [F.6a — manual CRUSH inspection via `crushtool`](#f6a-debug-manual-crush-inspection-via-crushtool-advanced) (backup, decompile, validate, rollback).
 
 > **Caution:** CRUSH moves can trigger rebalancing. Monitor `ceph -s` during changes.
 
@@ -1038,7 +1035,7 @@ ceph mon dump | grep -oE '[0-9.]+:6789' | paste -sd,
 # Example: 10.0.0.11:6789,10.0.0.12:6789,10.0.0.13:6789
 ```
 
-**Checkpoint:** three pools, CSI key, mon list → [Step 2](#step-2--deploy-ceph-csi-separate-from-odf).
+**Checkpoint:** three pools, CSI key, mon list → [Step 2](#step-2-deploy-ceph-csi-separate-from-odf).
 
 ---
 
@@ -1387,7 +1384,7 @@ Copy and tick as you go:
 
 | Topic | Recommendation |
 |-------|----------------|
-| **CRUSH changes** | Export map before edits; watch `ceph -s`; use [`crushtool` debug (F.6a)](#f6a-debug--manual-crush-inspection-via-crushtool-advanced) only when CLI `move` is insufficient |
+| **CRUSH changes** | Export map before edits; watch `ceph -s`; use [`crushtool` debug (F.6a)](#f6a-debug-manual-crush-inspection-via-crushtool-advanced) only when CLI `move` is insufficient |
 | **CSI user** | Dedicated `client.csi-rbd-external` — not `client.admin` |
 | **Version pin** | Fresh install: **Tentacle** (`CEPH_RELEASE=tentacle`), latest `20.x.y` patch from [download.ceph.com](https://download.ceph.com/). Ceph-CSI: latest GitHub tag — verify [compatibility](https://github.com/ceph/ceph-csi#ceph-csi-features-and-available-versions) with Ceph 20 |
 | **Network** | Mons + OSD public network reachable from all workers |
@@ -1413,7 +1410,7 @@ Copy and tick as you go:
 | `cephadm bootstrap`: unknown option `--public-network` | Not a valid bootstrap flag | Remove it; set `ceph config set mon public_network <CIDR>` after bootstrap — [F.3](#f3-bootstrap-the-cluster) |
 | `cephadm bootstrap` fails on FQDN hostname | Default expects short hostname | Add `--allow-fqdn-hostname`; use the same FQDN in `ceph orch host add` — [F.1](#f1-prepare-all-three-nodes), [F.3](#f3-bootstrap-the-cluster) |
 | PVC Bound, wrong zone pool | StorageClass topology | `oc describe pvc`; provisioner logs |
-| `ceph osd tree` wrong / move fails | Orphan hosts, bad bucket parents | Try `ceph osd crush move <host> zone=zone-a`; else [F.6a `crushtool` debug](#f6a-debug--manual-crush-inspection-via-crushtool-advanced) |
+| `ceph osd tree` wrong / move fails | Orphan hosts, bad bucket parents | Try `ceph osd crush move <host> zone=zone-a`; else [F.6a `crushtool` debug](#f6a-debug-manual-crush-inspection-via-crushtool-advanced) |
 | `pool does not exist` | Pools not created | `ceph osd pool ls \| grep rbd-zone` |
 | ODF impacted | Wrong namespace | Only touch `external-ceph-csi`; never edit `openshift-storage` pools |
 

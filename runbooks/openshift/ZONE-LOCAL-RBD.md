@@ -43,7 +43,7 @@ flowchart LR
 | ODF **4.16+** (4.15+ dev preview for multi-AZ) | Non-resilient topology pools |
 | **OSDs in each zone** | One replica per zone needs storage in that zone |
 | Nodes labeled `topology.kubernetes.io/zone` | Failure domain detection |
-| StorageCluster **not** using `flexibleScaling` with `failureDomain: host` only | Host-level pools cannot pin to zones (see [diagnosis](#0--diagnose-your-cluster)) |
+| StorageCluster **not** using `flexibleScaling` with `failureDomain: host` only | Host-level pools cannot pin to zones (see [diagnosis](#0-diagnose-your-cluster)) |
 | Application accepts **replica-1 risk** | OSD loss in a zone = **guaranteed data loss** for volumes in that pool |
 
 ---
