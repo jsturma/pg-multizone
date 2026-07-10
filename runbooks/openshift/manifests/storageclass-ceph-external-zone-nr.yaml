@@ -11,6 +11,7 @@ volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
 reclaimPolicy: Delete
 parameters:
+  # Logical Ceph-CSI cluster key — must match ceph-csi-config ConfigMap (not ceph fsid)
   clusterID: ceph-external
   pool: rbd-zone-a
   imageFormat: "2"

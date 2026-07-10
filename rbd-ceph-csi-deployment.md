@@ -22,7 +22,7 @@ Ce n’est **pas** un pool unique répliqué sur 3 zones (`size 3`, règle CRUSH
 | Ceph CRUSH | buckets | `zone-a`, `zone-b`, `zone-c` | [F.6 / Step 1.2](External-Ceph-Cluster.md#f6-configure-crush-zones) |
 | Ceph | pools RBD | `rbd-zone-a`, `rbd-zone-b`, `rbd-zone-c` | [F.7 / Step 1.3](External-Ceph-Cluster.md#f7-create-per-zone-rbd-pools) |
 | OpenShift | label nœud | `topology.kubernetes.io/zone=zone-a` … | [`topology/zones.env`](runbooks/openshift/topology/zones.env), [Step 3](External-Ceph-Cluster.md#step-3-label-openshift-nodes) |
-| ConfigMap | `ceph-csi-config` | `clusterID` + `monitors` **uniquement** | [Step 2.3](External-Ceph-Cluster.md#23-cluster-configmap) — **pas de zones** |
+| ConfigMap | `ceph-csi-config` | `clusterID` logique + `monitors` **uniquement** | [Step 2.3](External-Ceph-Cluster.md#23-cluster-configmap) — **pas de zones** ; `clusterID` ≠ `ceph fsid` |
 | StorageClass | `topologyConstrainedPools` | `rbd-zone-a` ↔ `zone-a` … | [`storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml) |
 | StorageClass | `allowedTopologies` | `zone-a`, `zone-b`, `zone-c` | idem |
 | StatefulSet | affinité zone | `zone-a` … `zone-c` | [`statefulset-external-rbd-nr.yaml`](runbooks/openshift/manifests/statefulset-external-rbd-nr.yaml) |
@@ -82,7 +82,7 @@ Manifeste du dépôt : [`runbooks/openshift/manifests/storageclass-ceph-external
 
 ```yaml
 parameters:
-  clusterID: ceph-external          # identique au ConfigMap Step 2.3
+  clusterID: ceph-external          # identifiant logique Ceph-CSI = ConfigMap Step 2.3 (≠ ceph fsid)
   pool: rbd-zone-a                  # pool par défaut ; la topologie choisit le bon
   topologyConstrainedPools: |-
     [
