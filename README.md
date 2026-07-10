@@ -315,6 +315,7 @@ oc delete namespace external-ceph-csi
 pg-multizone/
 ├── README.md
 ├── External-Ceph-Cluster.md         # Option D — fresh or existing external Ceph
+├── rbd-ceph-csi-deployment.md         # Résumé FR — topologie CSI RBD (pointe vers External-Ceph-Cluster.md)
 └── runbooks/openshift/
     ├── deploy.sh                    # CephFS (cephfs-multizone)
     ├── deploy-rbd.sh                # resilient (cephrbd-multizone-r)

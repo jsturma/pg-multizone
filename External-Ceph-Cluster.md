@@ -73,7 +73,7 @@ Fill this in as you work; you need every row before Step 2.
 | Pool names | `rbd-zone-a`, `rbd-zone-b`, `rbd-zone-c` | `rbd_pool_for_zone()` in `zones.env`; F.7 or Step 1.3 |
 | CSI Ceph user | `client.csi-rbd-external` | F.8-alt or Step 1.4 |
 | CSI user key | `(secret)` | `ceph auth get-key client.csi-rbd-external` |
-| `clusterID` in ConfigMap | `ceph-external` | Fixed in this guide — keep consistent with StorageClass |
+| `clusterID` in ConfigMap | `ceph-external` | Step 2.3 — monitors only; **zones are not in the ConfigMap** |
 | K8s zone label key | `topology.kubernetes.io/zone` | `K8S_ZONE_LABEL` in [`topology/zones.env`](runbooks/openshift/topology/zones.env) |
 | StorageClass name | `ceph-external-zone-nr` | [`manifests/storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml) |
 | Ceph version | `20.2.x` Tentacle (example) | F.2 — latest Tentacle patch from [download.ceph.com](https://download.ceph.com/); confirm with `ceph version` after bootstrap |
@@ -91,6 +91,7 @@ All zone identifiers must use the **same strings** everywhere. Defaults live in 
 | Ceph CRUSH rule | name | `replicated-zone-a`, … | `crush_rule_for_zone(zone-a)` |
 | Ceph orch host label | `zone=<value>` | `zone-a`, … | Same as K8s zone label **value** |
 | OpenShift node | `topology.kubernetes.io/zone` | `zone-a`, … | `K8S_ZONE_LABEL` + `ZONES` |
+| ConfigMap `ceph-csi-config` | `clusterID`, `monitors` only | `ceph-external`, mon IPs | **No zones** — connection info only |
 | StorageClass | `topologyConstrainedPools` | `rbd-zone-a` ↔ `zone-a` | [`storageclass-ceph-external-zone-nr.yaml`](runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml) |
 | StorageClass | `allowedTopologies` | `zone-a`, `zone-b`, `zone-c` | Same as node labels |
 | StatefulSet | `nodeAffinity` zone values | `zone-a`, … | [`statefulset-external-rbd-nr.yaml`](runbooks/openshift/manifests/statefulset-external-rbd-nr.yaml) |
@@ -1056,6 +1057,8 @@ Or use the [Helm chart](https://github.com/ceph/ceph-csi/tree/devel/charts/ceph-
 
 Replace monitor IPs with your values from F.9 or Step 1.5. **`clusterID` must match** the StorageClass parameter `ceph-external`.
 
+> **Zones do not belong in this ConfigMap.** `ceph-csi-config` only tells Ceph-CSI how to reach the cluster (`clusterID` + `monitors`). Zone → pool mapping is in the **StorageClass** (`topologyConstrainedPools`, Step 4) and **node labels** (`topology.kubernetes.io/zone`, Step 3). Do not add `domainLabels`, `topology`, or zone names to `config.json`.
+
 ```bash
 cat <<'EOF' | oc -n external-ceph-csi apply -f -
 apiVersion: v1
@@ -1139,7 +1142,7 @@ oc get nodes -L topology.kubernetes.io/zone
 
 ## Step 4 — StorageClass (`ceph-external-zone-nr`)
 
-Apply the manifest from this repo (edit monitor-related values in Step 2.3 only — pools and zones are pre-filled):
+Apply the manifest from this repo. Edit **monitor IPs** in Step 2.3 only; **zone ↔ pool mapping** is already set in the StorageClass manifest (not in the ConfigMap):
 
 ```bash
 oc apply -f runbooks/openshift/manifests/storageclass-ceph-external-zone-nr.yaml
@@ -1271,7 +1274,7 @@ Copy and tick as you go:
 [ ] Ceph: monitor IP list saved
 [ ] OpenShift: external-ceph-csi namespace (PSA privileged) + csi-rbd-secret
 [ ] OpenShift: csidriver.yaml applied; Ceph-CSI pods Running; SCC granted
-[ ] OpenShift: ceph-csi-config ConfigMap with correct mons
+[ ] OpenShift: ceph-csi-config ConfigMap — clusterID + monitors only (no zones)
 [ ] OpenShift: nodes labelled topology.kubernetes.io/zone (zones.env)
 [ ] OpenShift: ceph-external-zone-nr StorageClass applied
 [ ] OpenShift: ./topology/verify-alignment.sh passes
